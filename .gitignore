@@ -36,3 +36,11 @@ Thumbs.db
 *~
 !native/
 !native/*.dll
+
+# AstraCalls: artefatos de build/bancada (não versionar)
+*.log
+/wacalls
+/wacalls-bare
+/wacalls-mlow
+/wacalls-orig
+/Caddyfile

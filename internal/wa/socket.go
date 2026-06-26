@@ -87,6 +87,10 @@ func (s *Socket) DecryptCallKey(ctx context.Context, from types.JID, encChild *w
 	return signaling.DecodeCallKeyPlaintext(plaintext)
 }
 
+// GetTCToken: stub (igual ao original que toca). Comprovado no log bruto: anexar
+// o tctoken guardado (stale) faz o destino DESCARTAR o offer em silêncio — até
+// números que aceitariam param de tocar. Sem token, o offer toca (preaccept).
+// O 463 em números com privacidade estrita é anti-spam do WhatsApp (sem fix).
 func (s *Socket) GetTCToken(ctx context.Context, jid types.JID) ([]byte, error) {
 	return nil, nil
 }

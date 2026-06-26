@@ -37,7 +37,9 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 	var offerContent []waBinary.Node
 
 	if token, err := sock.GetTCToken(ctx, wanode.MustJID(wanode.CleanJID(peerJid.String()))); err == nil && len(token) > 0 {
-		offerContent = append(offerContent, waBinary.Node{Tag: "privacy", Content: token})
+		// tag CORRETA é "tctoken" (o whatsmeow usa Tag:"tctoken"); com "privacy"
+		// o servidor ignora o token e o offer some sem ack.
+		offerContent = append(offerContent, waBinary.Node{Tag: "tctoken", Content: token})
 	}
 
 	offerContent = append(offerContent,
@@ -50,6 +52,8 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 			"screen_width": "1920", "screen_height": "1080", "device_orientation": "0",
 		}})
 	}
+	// <destination> é o formato CORRETO do offer (o WaCalls original toca assim —
+	// confirmado: preaccept recebido). Trocar por <enc> direto foi regressão.
 	offerContent = append(offerContent,
 		waBinary.Node{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}},
 		waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: capabilityOffer},

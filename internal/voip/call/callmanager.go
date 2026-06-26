@@ -111,19 +111,25 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 	if err != nil {
 		return err
 	}
-	ackNode, err := m.sock.Query(ctx, offer)
-	if err != nil {
-		return err
-	}
 
 	m.mu.Lock()
 	_ = m.currentCall.ApplyTransition(Transition{Type: TransitionOfferSent})
 	m.emitState()
 	m.mu.Unlock()
 
-	if ackNode != nil {
-		go m.HandleCallAck(context.Background(), ackNode)
-	}
+	// Envia o offer e trata o ack em background: o aparelho toca quando recebe o
+	// offer, não quando o Query retorna. Antes travava até 15s no timeout do Query.
+	go func() {
+		ackNode, qerr := m.sock.Query(context.Background(), offer)
+		if qerr != nil {
+			m.log.Error("offer query error", "err", qerr)
+			return
+		}
+		if ackNode != nil {
+			m.log.Info("offer ack", "xml", ackNode.String())
+			m.HandleCallAck(context.Background(), ackNode)
+		}
+	}()
 
 	m.log.Info("call offer sent", "call_id", callID, "peer", resolved.String())
 	return nil
@@ -153,8 +159,13 @@ func (m *CallManager) AcceptCall(ctx context.Context, callID string) error {
 		acceptNode, err := signaling.BuildAcceptStanza(ctx, m.sock, callID, key, peer, creator, isVideo)
 		if err != nil {
 			m.log.Error("build accept failed", "err", err)
-		} else if _, err := m.sock.Query(ctx, acceptNode); err != nil {
-			m.log.Error("accept query error", "err", err)
+		} else {
+			// envia o accept em background: não bloquear a UI até 15s no timeout do ack
+			go func() {
+				if _, err := m.sock.Query(context.Background(), acceptNode); err != nil {
+					m.log.Error("accept query error", "err", err)
+				}
+			}()
 		}
 	}
 

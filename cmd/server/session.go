@@ -14,9 +14,12 @@ import (
 	"wacalls/internal/voip/wanode"
 	"wacalls/internal/wa"
 
+	"database/sql"
+
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -30,8 +33,38 @@ type Session struct {
 	client *whatsmeow.Client
 	reg    *callRegistry
 
-	mu   sync.Mutex
-	auth AuthSnapshot
+	// store próprio desta sessão (1 banco por sessão, estilo WAHA)
+	waContainer *sqlstore.Container
+	waDB        *sql.DB
+
+	mu       sync.Mutex
+	auth     AuthSnapshot
+	webhook  string
+	chatwoot ChatwootConfig
+}
+
+func (s *Session) setWebhook(url string) {
+	s.mu.Lock()
+	s.webhook = url
+	s.mu.Unlock()
+}
+
+func (s *Session) getWebhook() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.webhook
+}
+
+func (s *Session) setChatwoot(c ChatwootConfig) {
+	s.mu.Lock()
+	s.chatwoot = c
+	s.mu.Unlock()
+}
+
+func (s *Session) getChatwoot() ChatwootConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.chatwoot
 }
 
 func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {
@@ -158,6 +191,15 @@ func (s *Session) handleEvent(rawEvt any) {
 		s.setAuth(AuthSnapshot{State: "open", Paired: true})
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
+	case *events.Message:
+		s.dispatchWebhook("message", summarizeMessage(evt))
+		go s.chatwootPushIncoming(evt)
+	case *events.Receipt:
+		s.dispatchWebhook("receipt", map[string]any{
+			"chat": evt.Chat.String(), "sender": evt.Sender.String(),
+			"type": string(evt.Type), "ids": evt.MessageIDs,
+			"timestamp": evt.Timestamp.UnixMilli(),
+		})
 	case *events.CallOffer:
 		s.onIncomingOffer(ctx, evt)
 	case *events.CallAccept:
@@ -294,6 +336,9 @@ func (s *Session) replaceClient(client *whatsmeow.Client) {
 func (s *Session) shutdown() {
 	s.teardownAllCalls()
 	s.client.Disconnect()
+	if s.waDB != nil {
+		_ = s.waDB.Close()
+	}
 }
 
 func mapStatus(state core.CallState) CallStatus {

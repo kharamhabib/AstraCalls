@@ -2,11 +2,79 @@ package main
 
 import (
 	"log/slog"
+	"net"
+	"os"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 )
+
+// browserAPI é inicializado uma única vez. Quando WACALLS_PUBLIC_IP e
+// WACALLS_UDP_PORT estão definidos, o WebRTC com o navegador usa porta fixa
+// (UDP + ICE-TCP na mesma porta) e anuncia o IP público como candidato (NAT 1:1).
+// O ICE-TCP garante a mídia mesmo quando UDP de entrada é bloqueado.
+var (
+	browserAPIOnce sync.Once
+	browserAPI     *webrtc.API
+)
+
+// detectPublicIP descobre o IP de saída (rota padrão) sem enviar pacotes.
+// Em rede de host num VPS com IP público na interface, isso retorna o IP público.
+func detectPublicIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	if a, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+		return a.IP.String()
+	}
+	return ""
+}
+
+func getBrowserAPI(log *slog.Logger) *webrtc.API {
+	browserAPIOnce.Do(func() {
+		publicIP := os.Getenv("WACALLS_PUBLIC_IP")
+		udpPort, _ := strconv.Atoi(os.Getenv("WACALLS_UDP_PORT"))
+		if publicIP == "auto" {
+			publicIP = detectPublicIP()
+			if publicIP != "" {
+				log.Info("browser webrtc: auto-detected public IP", "ip", publicIP)
+			} else {
+				log.Warn("browser webrtc: could not auto-detect public IP")
+			}
+		}
+		if publicIP == "" || udpPort == 0 {
+			browserAPI = webrtc.NewAPI()
+			return
+		}
+		se := webrtc.SettingEngine{}
+		se.SetNAT1To1IPs([]string{publicIP}, webrtc.ICECandidateTypeHost)
+		se.SetNetworkTypes([]webrtc.NetworkType{
+			webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6,
+			webrtc.NetworkTypeTCP4, webrtc.NetworkTypeTCP6,
+		})
+		udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: udpPort})
+		if err != nil {
+			log.Error("browser webrtc: bind udp mux failed; falling back to ephemeral", "port", udpPort, "err", err)
+			browserAPI = webrtc.NewAPI()
+			return
+		}
+		se.SetICEUDPMux(webrtc.NewICEUDPMux(nil, udpConn))
+		log.Info("browser webrtc: fixed udp port + nat1to1 enabled", "public_ip", publicIP, "udp_port", udpPort)
+		if tcpListener, terr := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4zero, Port: udpPort}); terr == nil {
+			se.SetICETCPMux(webrtc.NewICETCPMux(nil, tcpListener, 8))
+			log.Info("browser webrtc: ice-tcp fallback enabled", "tcp_port", udpPort)
+		} else {
+			log.Error("browser webrtc: ice-tcp bind failed", "port", udpPort, "err", terr)
+		}
+		browserAPI = webrtc.NewAPI(webrtc.WithSettingEngine(se))
+	})
+	return browserAPI
+}
 
 type Bridge struct {
 	pc         *webrtc.PeerConnection
@@ -18,7 +86,7 @@ type Bridge struct {
 }
 
 func NewBridge(offerSDP string, log *slog.Logger) (*Bridge, string, error) {
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	pc, err := getBrowserAPI(log).NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		return nil, "", err
 	}

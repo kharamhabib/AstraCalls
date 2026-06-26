@@ -27,7 +27,10 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	if err != nil {
 		m.log.Error("offer decrypt call key", "err", err)
 	}
-	relays := signaling.ExtractRelayEndpoints(info.InnerNode)
+	// O offer de ENTRADA traz o <relay> no formato te2 (igual ao ack da saída).
+	// ExtractRelayEndpoints é do formato antigo (ip/token) e dava 0 relays = sem
+	// áudio. ParseRelayFromAck lê o te2 corretamente.
+	parsed := signaling.ParseRelayFromAck(info.InnerNode)
 
 	mediaType := core.CallMediaTypeAudio
 	if isVideo {
@@ -39,8 +42,15 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	if callKey != nil {
 		call.EncryptionKey = callKey
 	}
-	if len(relays) > 0 {
-		call.RelayData = &core.RelayData{Endpoints: relays}
+	if len(parsed.Relays) > 0 {
+		call.RelayData = &core.RelayData{
+			Endpoints:       parsed.Relays,
+			ParticipantJids: parsed.ParticipantJids,
+			UUID:            parsed.UUID,
+			SelfPid:         parsed.SelfPid,
+			PeerPid:         parsed.PeerPid,
+			HbhKey:          parsed.HbhKey,
+		}
 	}
 	m.currentCall = call
 	m.initialTransportSent = false
@@ -53,7 +63,20 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	m.selfSsrc = media.GenerateSecureSsrc(callID, sj, 0)
 	m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrc)
 	m.peerSsrcs = []uint32{media.GenerateSecureSsrc(callID, peerJid.String(), 0)}
+	// SSRC/SRTP a partir dos participantes do relay (igual à saída em HandleCallAck)
+	ourBase := wanode.CleanJID(m.ownCredJid())
+	if len(parsed.ParticipantJids) > 0 {
+		ourDeviceJid := ensureDeviceJid(findOurDevice(parsed.ParticipantJids, ourBase, m.ownCredJid()))
+		m.selfSsrc = media.GenerateSecureSsrc(callID, ourDeviceJid, 0)
+		m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrc)
+		if peer := firstPeerDevice(parsed.ParticipantJids, ourBase); peer != "" {
+			m.peerSsrcs = []uint32{media.GenerateSecureSsrc(callID, ensureDeviceJid(peer), 0)}
+		}
+	}
 	m.initCodec()
+	if callKey != nil && len(parsed.Relays) > 0 {
+		m.initSrtpKeysLocked()
+	}
 	m.mu.Unlock()
 
 	preaccept := signaling.BuildPreacceptStanza(peerJid, callID, wanode.MustJID(creator))
@@ -67,7 +90,7 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	m.mu.Lock()
 	m.emitState()
 	m.mu.Unlock()
-	m.log.Info("incoming call", "call_id", callID, "peer", peerJid.String(), "video", isVideo, "relays", len(relays))
+	m.log.Info("incoming call", "call_id", callID, "peer", peerJid.String(), "video", isVideo, "relays", len(parsed.Relays))
 }
 
 func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node, peerJid types.JID) {

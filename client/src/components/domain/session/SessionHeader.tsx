@@ -3,6 +3,7 @@ import { Loader2, Power, QrCode } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ChatwootDialog } from "./ChatwootDialog";
 import { logoutSession, pairSession } from "@/services/sessions";
 import type { SessionInfo, SessionState } from "@/types/session";
 
@@ -40,17 +41,20 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
         <h1 className="truncate text-xl font-semibold tracking-tight">{session.name}</h1>
         <Badge variant={statusVariant[session.state]}>{statusLabel[session.state]}</Badge>
       </div>
-      {session.paired ? (
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => logoutSession(session.id))}>
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
-          Disconnect
-        </Button>
-      ) : (
-        <Button size="sm" disabled={busy} onClick={() => run(() => pairSession(session.id))}>
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
-          Reactivate
-        </Button>
-      )}
+      <div className="flex items-center gap-2">
+        {session.paired && <ChatwootDialog sid={session.id} />}
+        {session.paired ? (
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => logoutSession(session.id))}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
+            Disconnect
+          </Button>
+        ) : (
+          <Button size="sm" disabled={busy} onClick={() => run(() => pairSession(session.id))}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
+            Reactivate
+          </Button>
+        )}
+      </div>
     </div>
   );
 };

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
-import { Menu, PhoneCall } from "lucide-react";
+import { Menu, PhoneCall, BookOpen, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { isAuthed, clearAuth } from "@/lib/auth";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Sidebar } from "./Sidebar";
 import { ThemeToggle } from "./ThemeToggle";
@@ -28,7 +29,28 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
           </span>
           <span className="text-lg font-semibold tracking-tight">WaCalls</span>
         </div>
-        <ThemeToggle />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <a href="/api-docs.html" target="_blank" rel="noopener noreferrer" aria-label="API documentation">
+              <BookOpen className="h-4 w-4" />
+              <span className="hidden sm:inline">API</span>
+            </a>
+          </Button>
+          <ThemeToggle />
+          {isAuthed() && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Sair"
+              onClick={() => {
+                clearAuth();
+                location.reload();
+              }}
+            >
+              <LogOut className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </header>
       <div className="flex flex-1">
         <aside className="hidden w-64 shrink-0 border-r md:block">

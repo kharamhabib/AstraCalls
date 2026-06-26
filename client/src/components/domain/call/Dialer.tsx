@@ -51,6 +51,9 @@ export const Dialer = ({ sid }: { sid: string }) => {
             {startCall.isPending ? "Calling…" : "Call"}
           </Button>
         </div>
+        <p className="text-xs text-muted-foreground">
+          Você pode fazer várias ligações ao mesmo tempo — disque outro número e uma nova chamada aparece abaixo.
+        </p>
       </CardContent>
     </Card>
   );
