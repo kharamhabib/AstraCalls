@@ -49,6 +49,11 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/chatwoot/webhook", s.handleChatwootWebhook)
 	mux.HandleFunc("GET /api/chatwoot/resolve", s.handleChatwootResolve)
 
+	// Configurações de IA por sessão
+	mux.HandleFunc("POST /api/sessions/{sid}/ai-config", s.handleSetAIConfig)
+	mux.HandleFunc("GET /api/sessions/{sid}/ai-config", s.handleGetAIConfig)
+	mux.HandleFunc("DELETE /api/sessions/{sid}/ai-config", s.handleDeleteAIConfig)
+
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
 	if s.staticDir != "" {

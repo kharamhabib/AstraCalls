@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChatwootDialog } from "./ChatwootDialog";
+import { AIDialog } from "./AIDialog";
 import { logoutSession, pairSession } from "@/services/sessions";
 import type { SessionInfo, SessionState } from "@/types/session";
 
@@ -43,6 +44,7 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
       </div>
       <div className="flex items-center gap-2">
         {session.paired && <ChatwootDialog sid={session.id} />}
+        {session.paired && <AIDialog sid={session.id} />}
         {session.paired ? (
           <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => logoutSession(session.id))}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}

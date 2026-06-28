@@ -2,35 +2,41 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
-	"path/filepath"
+	"os"
 	"testing"
 
 	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/store/sqlstore"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func newTestManager(t *testing.T) *SessionManager {
 	t.Helper()
+	pgURL := os.Getenv("WACALLS_PG_URL")
+	if pgURL == "" {
+		t.Skip("WACALLS_PG_URL environment variable is not set, skipping test")
+		return nil
+	}
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "mgr_test.db")
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+	db, err := newDBProvider(ctx, pgURL, "wacalls_test", waLog.Noop, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() {
+		db.close()
+	})
 
-	container := sqlstore.NewWithDB(db, "sqlite3", waLog.Noop)
-	if err := container.Upgrade(ctx); err != nil {
-		t.Fatal(err)
-	}
-	store, err := newSessionStore(ctx, db)
+	mainDB, err := db.openMainDB(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newSessionManager(ctx, container, NewBroker(), store, waLog.Noop, slog.Default(), 0)
+	t.Cleanup(func() { mainDB.Close() })
+
+	store, err := newSessionStore(ctx, mainDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newSessionManager(ctx, db, NewBroker(), store, waLog.Noop, slog.Default(), 0)
 }
 
 func (m *SessionManager) addUnconnected(t *testing.T, name string) *Session {
@@ -39,13 +45,23 @@ func (m *SessionManager) addUnconnected(t *testing.T, name string) *Session {
 	if err := m.store.insert(m.appCtx, id, name); err != nil {
 		t.Fatal(err)
 	}
-	client := whatsmeow.NewClient(m.container.NewDevice(), waLog.Noop)
+	container, db, err := m.db.openSessionContainer(m.appCtx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := whatsmeow.NewClient(container.NewDevice(), waLog.Noop)
 	s := newSession(m, id, name, client)
+	s.waContainer = container
+	s.waDB = db
 	m.register(s)
 	return s
 }
 
 func TestSessionManagerRegistry(t *testing.T) {
+	pgURL := os.Getenv("WACALLS_PG_URL")
+	if pgURL == "" {
+		t.Skip("WACALLS_PG_URL environment variable is not set, skipping test")
+	}
 	m := newTestManager(t)
 
 	if len(m.infos()) != 0 {
@@ -78,3 +94,4 @@ func TestSessionManagerRegistry(t *testing.T) {
 		t.Fatal("expected 1 session after unregister")
 	}
 }
+

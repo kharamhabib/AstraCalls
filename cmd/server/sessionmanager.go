@@ -150,6 +150,12 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 				s.setChatwoot(cfg)
 			}
 		}
+		if row.AIConfig != "" {
+			var cfg AIConfig
+			if json.Unmarshal([]byte(row.AIConfig), &cfg) == nil {
+				s.setAIConfig(cfg)
+			}
+		}
 		m.register(s)
 		if err := s.connect(ctx); err != nil {
 			m.log.Error("session connect failed", "session", row.ID, "err", err)

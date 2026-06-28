@@ -2,21 +2,36 @@ package main
 
 import (
 	"context"
-	"database/sql"
-	"path/filepath"
+	"log/slog"
+	"os"
 	"testing"
+
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func TestSessionStoreRoundtrip(t *testing.T) {
+	pgURL := os.Getenv("WACALLS_PG_URL")
+	if pgURL == "" {
+		t.Skip("WACALLS_PG_URL environment variable is not set, skipping test")
+	}
+
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "sessions_test.db")
-	db, err := sql.Open("sqlite", "file:"+dbPath)
+	db, err := newDBProvider(ctx, pgURL, "wacalls_test_store", waLog.Noop, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer db.close()
 
-	st, err := newSessionStore(ctx, db)
+	mainDB, err := db.openMainDB(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mainDB.Close()
+
+	// Clean up table if exists
+	_, _ = mainDB.ExecContext(ctx, "DROP TABLE IF EXISTS sessions")
+
+	st, err := newSessionStore(ctx, mainDB)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,3 +68,4 @@ func TestSessionStoreRoundtrip(t *testing.T) {
 		t.Fatalf("expected empty after delete, got %+v", rows)
 	}
 }
+

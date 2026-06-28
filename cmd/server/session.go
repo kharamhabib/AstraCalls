@@ -41,6 +41,7 @@ type Session struct {
 	auth     AuthSnapshot
 	webhook  string
 	chatwoot ChatwootConfig
+	aiConfig AIConfig
 }
 
 func (s *Session) setWebhook(url string) {
@@ -65,6 +66,18 @@ func (s *Session) getChatwoot() ChatwootConfig {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.chatwoot
+}
+
+func (s *Session) setAIConfig(c AIConfig) {
+	s.mu.Lock()
+	s.aiConfig = c
+	s.mu.Unlock()
+}
+
+func (s *Session) getAIConfig() AIConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.aiConfig
 }
 
 func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {

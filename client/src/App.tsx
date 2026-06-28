@@ -11,11 +11,17 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { ensureSessionsWired, useSessions } from "@/stores/sessions";
 import { ensureCallsWired } from "@/stores/calls";
 import { useTheme } from "@/stores/theme";
+import { useAICallHandler } from "@/hooks/useAICallHandler";
+import { useAICallScheduler } from "@/hooks/useAICallScheduler";
 
 export const App = () => {
   const sessions = useSessions((s) => s.sessions);
   const activeId = useSessions((s) => s.activeId);
   const theme = useTheme((s) => s.theme);
+
+  // Ativa os hooks automáticos de IA e Agendamentos
+  useAICallHandler();
+  useAICallScheduler();
 
   useEffect(() => {
     ensureSessionsWired();

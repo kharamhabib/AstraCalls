@@ -44,3 +44,15 @@ Thumbs.db
 /wacalls-mlow
 /wacalls-orig
 /Caddyfile
+
+# Configurações de ambiente local (Evitar vazamento de segredos)
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+.env.*.local
+
+# Dados locais de bancos de dados rodando em Docker
+postgres-data/
+pgdata/

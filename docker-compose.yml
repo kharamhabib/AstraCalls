@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # Porta HTTP para o painel web e API REST
+      - "${PORT:-8080}:8080"
+      # Porta de mídia WebRTC (VoIP) necessária para o fluxo de áudio (UDP + TCP Mux)
+      - "${WACALLS_UDP_PORT:-50000}:${WACALLS_UDP_PORT:-50000}/udp"
+      - "${WACALLS_UDP_PORT:-50000}:${WACALLS_UDP_PORT:-50000}/tcp"
+    environment:
+      - WACALLS_PG_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@database:5432/${POSTGRES_DB:-postgres}?sslmode=disable
+      - WACALLS_PG_NAMESPACE=${WACALLS_PG_NAMESPACE:-wacalls}
+      - WACALLS_MAX_CALLS=${WACALLS_MAX_CALLS:-8}
+      - WACALLS_PUBLIC_IP=${WACALLS_PUBLIC_IP:-auto}
+      - WACALLS_UDP_PORT=${WACALLS_UDP_PORT:-50000}
+    depends_on:
+      database:
+        condition: service_healthy
+
+  database:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-postgres}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
