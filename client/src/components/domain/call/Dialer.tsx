@@ -4,16 +4,32 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { DeviceSelector } from "@/components/form/DeviceSelector";
 import { useStartCall } from "@/hooks/useStartCall";
 import { useDevices } from "@/stores/devices";
 import { useAIAgents } from "@/stores/ai";
 
+/** Reusable toggle switch for the dialer */
+const InlineSwitch = ({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => (
+  <button
+    type="button"
+    onClick={() => onChange(!checked)}
+    className={`switch-track relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent focus:outline-none focus:ring-2 focus:ring-primary ${
+      checked ? "bg-amber-500" : "bg-muted"
+    }`}
+  >
+    <span
+      className={`switch-thumb pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow ${
+        checked ? "translate-x-5" : "translate-x-0"
+      }`}
+    />
+  </button>
+);
+
 export const Dialer = ({ sid }: { sid: string }) => {
   const [phone, setPhone] = useState("");
   const [record, setRecord] = useState(false);
-  
-  // Estados para ligar com IA e instrução adicional
+
+  // AI call options
   const [callWithAI, setCallWithAI] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("");
   const [enableGreeting, setEnableGreeting] = useState(false);
@@ -27,19 +43,16 @@ export const Dialer = ({ sid }: { sid: string }) => {
     if (!phone.trim() || startCall.isPending) return;
 
     if (callWithAI) {
-      // Dispara ligação ativa e acopla a IA assim que o status transicionar para conectada
       void startCall.mutateAsync({ phone: phone.trim(), record })
         .then((callId) => {
-          // Registra para o acoplamento automático da IA
           useAIAgents.getState().addScheduledInProgress(callId);
-          
+
           if (customPrompt.trim() !== "") {
             useAIAgents.getState().setCustomPrompt(callId, customPrompt.trim());
           }
           if (enableGreeting && customGreeting.trim() !== "") {
             useAIAgents.getState().setCustomGreeting(callId, customGreeting.trim());
           } else {
-            // Se desmarcado, força sem fala inicial
             useAIAgents.getState().setCustomGreeting(callId, "");
           }
 
@@ -53,13 +66,14 @@ export const Dialer = ({ sid }: { sid: string }) => {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Dialer</CardTitle>
+    <Card className="card-premium">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Phone className="h-4 w-4 text-primary" />
+          Discador
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <DeviceSelector />
-        
         <div className="flex flex-wrap items-center gap-2">
           <Input
             value={phone}
@@ -77,18 +91,19 @@ export const Dialer = ({ sid }: { sid: string }) => {
             size="sm"
             onClick={() => setRecord((v) => !v)}
             aria-pressed={record}
+            className="gap-1.5"
           >
             <Disc3 className="h-4 w-4" />
             Record
           </Button>
-          <Button onClick={submit} disabled={startCall.isPending || !phone.trim()}>
+          <Button onClick={submit} disabled={startCall.isPending || !phone.trim()} className="gap-1.5">
             <Phone className="h-4 w-4" />
             {startCall.isPending ? "Calling…" : "Call"}
           </Button>
         </div>
 
-        {/* Opções de IA para Ligações Efetuadas */}
-        <div className="border border-amber-500/20 rounded-lg p-3 space-y-3 bg-amber-500/5">
+        {/* AI Options */}
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3.5 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-amber-500 fill-amber-500/20" />
@@ -96,13 +111,9 @@ export const Dialer = ({ sid }: { sid: string }) => {
                 Ligar usando a IA (Agente de Voz)
               </Label>
             </div>
-            <input
-              id="callWithAI"
-              type="checkbox"
-              className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary accent-amber-500"
+            <InlineSwitch
               checked={callWithAI}
-              onChange={(e) => {
-                const checked = e.target.checked;
+              onChange={(checked) => {
                 setCallWithAI(checked);
                 if (checked) {
                   setCustomGreeting(activeConfig?.firstUtterance || "");
@@ -113,7 +124,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
           </div>
 
           {callWithAI && (
-            <div className="space-y-3 pt-3 border-t border-amber-500/10">
+            <div className="space-y-3 pt-3 border-t border-amber-500/10 animate-fade-in">
               <div className="space-y-1.5">
                 <Label htmlFor="customPrompt" className="text-xs">
                   Instrução Adicional para esta Chamada (Opcional)
@@ -146,7 +157,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
                     placeholder="Frase inicial que a IA falará..."
                     value={customGreeting}
                     onChange={(e) => setCustomGreeting(e.target.value)}
-                    className="h-8 text-xs bg-background"
+                    className="h-8 text-xs bg-background animate-fade-in-fast"
                   />
                 )}
               </div>

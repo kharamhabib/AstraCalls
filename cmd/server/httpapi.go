@@ -19,6 +19,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/config", s.handleConfig)
 	mux.HandleFunc("GET /api/sessions", s.handleSessionList)
 	mux.HandleFunc("POST /api/sessions", s.handleSessionCreate)
+	mux.HandleFunc("POST /api/sessions/{sid}/rename", s.handleSessionRename)
 	mux.HandleFunc("GET /api/sessions/{sid}/calls", s.handleSessionCalls)
 	mux.HandleFunc("DELETE /api/sessions/{sid}", s.handleSessionDelete)
 	mux.HandleFunc("POST /api/sessions/{sid}/logout", s.handleSessionLogout)
@@ -53,6 +54,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/ai-config", s.handleSetAIConfig)
 	mux.HandleFunc("GET /api/sessions/{sid}/ai-config", s.handleGetAIConfig)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/ai-config", s.handleDeleteAIConfig)
+	mux.HandleFunc("POST /api/sessions/{sid}/tool-proxy", s.handleToolProxy)
 
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
@@ -172,6 +174,27 @@ func (s *server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleSessionRename(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name required"})
+		return
+	}
+	sid := r.PathValue("sid")
+	if err := s.sessions.Rename(r.Context(), sid, name); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *server) handleSessionLogout(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,9 @@ export const createSession = (name: string) =>
 
 export const deleteSession = (id: string) => apiDelete(`/api/sessions/${id}`);
 
+export const renameSession = (id: string, name: string) =>
+  apiPost<{ status: string }>(`/api/sessions/${id}/rename`, { name });
+
 const postVoid = async (path: string): Promise<void> => {
   const r = await fetch(apiUrl(path), {
     method: "POST",

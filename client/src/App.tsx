@@ -40,7 +40,7 @@ export const App = () => {
             description="Create your first WhatsApp account from the sidebar to start calling."
           />
         ) : active ? (
-          <div className="space-y-6">
+          <div className="space-y-4">
             <SessionHeader session={active} />
             {active.paired ? <CallsPage sid={active.id} /> : <SessionPairing session={active} />}
           </div>

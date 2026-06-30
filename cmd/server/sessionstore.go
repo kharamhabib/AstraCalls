@@ -89,6 +89,11 @@ func (s *sessionStore) setAIConfig(ctx context.Context, id, cfgJSON string) erro
 	return err
 }
 
+func (s *sessionStore) setName(ctx context.Context, id, name string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET name = $1 WHERE id = $2`, name, id)
+	return err
+}
+
 func (s *sessionStore) delete(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = $1`, id)
 	return err

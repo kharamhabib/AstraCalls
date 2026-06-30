@@ -11,8 +11,8 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b bg-background/80 px-4 py-3 backdrop-blur sm:px-6">
-        <div className="flex items-center gap-2">
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b bg-background/80 px-4 py-3 backdrop-blur-md sm:px-6">
+        <div className="flex items-center gap-2.5">
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
               <Button variant="outline" size="icon" className="md:hidden" aria-label="Accounts">
@@ -24,13 +24,13 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
               <Sidebar onNavigate={() => setMobileOpen(false)} />
             </SheetContent>
           </Sheet>
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
             <PhoneCall className="h-4 w-4" />
           </span>
-          <span className="text-lg font-semibold tracking-tight">RockCall</span>
+          <span className="text-lg font-bold tracking-tight">RockCall</span>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" asChild>
+        <div className="flex items-center gap-1.5">
+          <Button variant="ghost" size="sm" asChild className="text-muted-foreground hover:text-foreground">
             <a href="/api-docs.html" target="_blank" rel="noopener noreferrer" aria-label="API documentation">
               <BookOpen className="h-4 w-4" />
               <span className="hidden sm:inline">API</span>
@@ -42,6 +42,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
               variant="ghost"
               size="icon"
               aria-label="Sair"
+              className="text-muted-foreground hover:text-foreground"
               onClick={() => {
                 clearAuth();
                 location.reload();
@@ -53,10 +54,12 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
         </div>
       </header>
       <div className="flex flex-1">
-        <aside className="hidden w-64 shrink-0 border-r md:block">
+        <aside className="hidden w-64 shrink-0 border-r bg-card/30 md:block">
           <Sidebar />
         </aside>
-        <main className="flex-1 px-4 py-6 sm:px-6">{children}</main>
+        <main className="flex-1 overflow-y-auto">
+          <div className="py-6">{children}</div>
+        </main>
       </div>
     </div>
   );

@@ -1,5 +1,11 @@
-import type { AIConfig } from "@/types/ai";
+import type { AIConfig, ScheduledCall } from "@/types/ai";
 import { useAIAgents } from "@/stores/ai";
+import { useCalls } from "@/stores/calls";
+import { useSessions } from "@/stores/sessions";
+import { getApiKey, apiUrl } from "@/lib/auth";
+import { getClientId } from "@/lib/client-id";
+import { getAIConfig, setAIConfig } from "@/services/ai";
+import { toast } from "sonner";
 
 // Helpers para conversão de áudio e base64
 function base64ToFloat32(base64: string): Float32Array {
@@ -66,6 +72,7 @@ export class GeminiLiveSession {
   private config: AIConfig;
   private onAudioReceived: (float32: Float32Array) => void = () => {};
   private onTextReceived: (speaker: "client" | "ai", text: string) => void = () => {};
+  private onToolCallReceived: (name: string, args: any) => Promise<any> = async () => ({});
   public isConnected = false;
   public ready = false;
 
@@ -75,10 +82,12 @@ export class GeminiLiveSession {
 
   connect(
     onAudio: (data: Float32Array) => void,
-    onText: (speaker: "client" | "ai", text: string) => void
+    onText: (speaker: "client" | "ai", text: string) => void,
+    onToolCall: (name: string, args: any) => Promise<any>
   ): Promise<void> {
     this.onAudioReceived = onAudio;
     this.onTextReceived = onText;
+    this.onToolCallReceived = onToolCall;
 
     return new Promise((resolve, reject) => {
       const apiKey = this.config.geminiApiKey;
@@ -91,7 +100,100 @@ export class GeminiLiveSession {
       this.ws.onopen = () => {
         this.isConnected = true;
 
-        // Envia mensagem de Setup inicial (seguindo a especificação da API Bidi)
+        // Prepara as ferramentas (tools) se habilitadas
+        const toolsPayload: any[] = [];
+        if (this.config.toolsEnabled) {
+          const functionDeclarations: any[] = [];
+
+          // Predefinidas
+          if (this.config.predefinedTools?.includes("hangup")) {
+            functionDeclarations.push({
+              name: "hangup",
+              description: "Termina a chamada de voz imediatamente e desliga o telefone do cliente.",
+              parameters: { type: "OBJECT", properties: {} }
+            });
+          }
+
+          if (this.config.predefinedTools?.includes("human_transfer")) {
+            functionDeclarations.push({
+              name: "human_transfer",
+              description: "Transfere a chamada para um atendente humano imediatamente. Use isso quando o cliente solicitar falar com um humano, ou quando o assunto for complexo demais.",
+              parameters: { type: "OBJECT", properties: {} }
+            });
+          }
+
+          if (this.config.predefinedTools?.includes("send_message")) {
+            functionDeclarations.push({
+              name: "send_message",
+              description: "Envia uma mensagem de texto via WhatsApp para o cliente. Use isso para enviar confirmações, comprovantes, links ou qualquer informação por escrito solicitada.",
+              parameters: {
+                type: "OBJECT",
+                properties: {
+                  message: { type: "STRING", description: "O conteúdo da mensagem a ser enviada por escrito." },
+                  to: { type: "STRING", description: "Opcional. O número de telefone do destinatário com DDI (ex: 5511999999999). Se vazio, envia para o próprio cliente atual." }
+                },
+                required: ["message"]
+              }
+            });
+          }
+
+          if (this.config.predefinedTools?.includes("schedule_call")) {
+            functionDeclarations.push({
+              name: "schedule_call",
+              description: "Reagenda ou agenda uma ligação telefônica da IA para este mesmo cliente. Use isso quando o cliente disser que não pode falar no momento, pedir para retornar mais tarde, ou solicitar um lembrete em um horário específico.",
+              parameters: {
+                type: "OBJECT",
+                properties: {
+                  datetime: {
+                    type: "STRING",
+                    description: "Data e Hora do agendamento no formato ISO 8601 (ex: YYYY-MM-DDTHH:MM:SS-03:00). Calcule de forma relativa ao horário atual fornecido no prompt."
+                  },
+                  prompt: {
+                    type: "STRING",
+                    description: "Instruções específicas ou roteiro de prompt para a IA seguir na próxima chamada. Ex: 'Ligar para confirmar a reunião' ou 'Lembrar de tomar o remédio'."
+                  }
+                },
+                required: ["datetime"]
+              }
+            });
+          }
+
+          // Customizadas
+          if (this.config.customTools && this.config.customTools.length > 0) {
+            for (const ct of this.config.customTools) {
+              const properties: any = {};
+              const required: string[] = [];
+
+              if (ct.parameters) {
+                for (const p of ct.parameters) {
+                  properties[p.name] = {
+                    type: p.type.toUpperCase(), // STRING, NUMBER, BOOLEAN
+                    description: p.description
+                  };
+                  if (p.required) {
+                    required.push(p.name);
+                  }
+                }
+              }
+
+              functionDeclarations.push({
+                name: ct.name,
+                description: ct.description,
+                parameters: {
+                  type: "OBJECT",
+                  properties,
+                  required
+                }
+              });
+            }
+          }
+
+          if (functionDeclarations.length > 0) {
+            toolsPayload.push({ functionDeclarations });
+          }
+        }
+
+        // Envia mensagem de Setup inicial
         const setupPayload: any = {
           setup: {
             model: model,
@@ -107,12 +209,12 @@ export class GeminiLiveSession {
               },
               temperature: this.config.temperature ?? 1.0
             },
-            // Sempre habilitar transcrições para depuração e UX
             inputAudioTranscription: {},
             outputAudioTranscription: {},
             systemInstruction: {
               parts: [{ text: this.config.systemInstruction }]
-            }
+            },
+            ...(toolsPayload.length > 0 ? { tools: toolsPayload } : {})
           }
         };
 
@@ -135,8 +237,17 @@ export class GeminiLiveSession {
             return;
           }
 
-          const serverContent = msg.serverContent;
+          // Chamadas de Função (Tools)
+          if (msg.toolCall) {
+            const functionCalls = msg.toolCall.functionCalls;
+            if (functionCalls) {
+              for (const fc of functionCalls) {
+                this.handleFunctionCall(fc);
+              }
+            }
+          }
 
+          const serverContent = msg.serverContent;
           if (serverContent) {
             // 1. Áudio de saída da IA (Gemini -> Cliente)
             const modelTurn = serverContent.modelTurn;
@@ -175,6 +286,34 @@ export class GeminiLiveSession {
         this.ready = false;
       };
     });
+  }
+
+  async handleFunctionCall(fc: { name: string; args: any; id: string }) {
+    console.log(`[GeminiLive] Recebeu Tool Call do Gemini: ${fc.name}`, fc.args);
+    let output: any = {};
+    try {
+      output = await this.onToolCallReceived(fc.name, fc.args);
+    } catch (e) {
+      console.error(`[GeminiLive] Erro ao processar tool ${fc.name}:`, e);
+      output = { error: (e as Error).message };
+    }
+
+    const payload = {
+      realtimeInput: {
+        toolResponse: {
+          functionResponses: [
+            {
+              response: { output: output },
+              id: fc.id
+            }
+          ]
+        }
+      }
+    };
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(payload));
+      console.log(`[GeminiLive] Enviou Tool Response para: ${fc.name}`, output);
+    }
   }
 
   sendAudioChunk(pcmInt16: Int16Array) {
@@ -230,6 +369,7 @@ export class GeminiLiveAgent {
   private processorNode: ScriptProcessorNode | null = null;
   private mediaDestNode: MediaStreamAudioDestinationNode | null = null;
   private player: PCMPlayer | null = null;
+  private detached = false;
 
   constructor(callId: string, pc: RTCPeerConnection, micStream: MediaStream, remoteStream: MediaStream, config: AIConfig) {
     this.callId = callId;
@@ -242,14 +382,12 @@ export class GeminiLiveAgent {
   async start(): Promise<void> {
     console.log("[GeminiAgent] Iniciando agente de voz IA.");
 
-    // Recupera e aplica instruções customizadas (adicionais) e saudações do dialer para esta chamada específica
+    // Recupera e aplica instruções customizadas (adicionais) e saudações do dialer
     const customPrompt = useAIAgents.getState().getAndRemoveCustomPrompt(this.callId);
+    let extraPrompt = "";
     if (customPrompt) {
       console.log("[GeminiAgent] Aplicando instrução adicional do dialer.");
-      this.config = {
-        ...this.config,
-        systemInstruction: `${this.config.systemInstruction}\n\nInstrução adicional para esta chamada específica: ${customPrompt}`
-      };
+      extraPrompt = `\n\nInstrução adicional para esta chamada específica: ${customPrompt}`;
     }
 
     const customGreeting = useAIAgents.getState().getAndRemoveCustomGreeting(this.callId);
@@ -261,6 +399,34 @@ export class GeminiLiveAgent {
       };
     }
 
+    // Processamento de Tags Dinâmicas no Prompt
+    let processedPrompt = (this.config.systemInstruction || "") + extraPrompt;
+    const call = useCalls.getState().calls.find((c) => c.callId === this.callId);
+    const direction = call?.direction === "inbound" ? "entrada (recebida)" : "saída (efetuada)";
+    const phone = call?.peer || "desconhecido";
+    const session = useSessions.getState().sessions.find((s) => s.id === call?.sessionId);
+    const sessionName = session?.name || "WhatsApp";
+
+    const now = new Date().toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    processedPrompt = processedPrompt
+      .replace(/\[today\]/g, now)
+      .replace(/\[phone\]/g, phone)
+      .replace(/\[direction\]/g, direction)
+      .replace(/\[session_name\]/g, sessionName)
+      .replace(/\[custom_fields\]/g, this.config.customFields || "");
+
+    this.config = {
+      ...this.config,
+      systemInstruction: processedPrompt
+    };
+
     // 1. Inicializa a sessão WebSocket com o Gemini
     this.session = new GeminiLiveSession(this.config);
 
@@ -268,7 +434,6 @@ export class GeminiLiveAgent {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     this.audioCtx = new AudioContextClass({ sampleRate: 16000 });
 
-    // Força a ativação do contexto se ele for criado em estado suspenso
     if (this.audioCtx.state === "suspended") {
       await this.audioCtx.resume();
     }
@@ -280,16 +445,17 @@ export class GeminiLiveAgent {
     // Conecta a sessão WebSocket e aguarda setupComplete
     await this.session.connect(
       (audioData) => {
-        // Envia áudio da IA para o player tocar na direção da chamada
         this.player?.playChunk(audioData, 24000);
       },
       (speaker, text) => {
-        // Envia transcrições para a store global em tempo real
         useAIAgents.getState().appendTranscription(this.callId, speaker, text);
+      },
+      async (name, args) => {
+        return this.handleToolCall(name, args);
       }
     );
 
-    // Se houver uma primeira fala configurada, engaja a conversa enviando o texto para a IA falar imediatamente
+    // Se houver uma primeira fala configurada, envia o texto para a IA falar imediatamente
     if (this.config.firstUtterance && this.config.firstUtterance.trim() !== "") {
       console.log("[GeminiAgent] IA iniciando a conversa (primeira fala).");
       this.session.sendText(this.config.firstUtterance);
@@ -298,13 +464,11 @@ export class GeminiLiveAgent {
     // 4. Captura a voz do cliente vinda do WebRTC e envia ao Gemini
     const remoteSource = this.audioCtx.createMediaStreamSource(this.remoteStream);
 
-    // ScriptProcessor para rodar em 16kHz e capturar buffer de áudio
     this.processorNode = this.audioCtx.createScriptProcessor(2048, 1, 1);
     this.processorNode.onaudioprocess = (e) => {
       if (!this.session?.isConnected || !this.session?.ready) return;
 
-      // Se a IA estiver ativamente falando (reproduzindo áudio), ignoramos o áudio vindo do cliente
-      // para evitar que ecos ou pequenos ruídos/cliques no canal VoIP interrompam a fala da IA
+      // Se a IA estiver ativamente falando, ignoramos o áudio vindo do cliente
       if (this.player && this.player.isPlaying()) return;
 
       const inputFloat32 = e.inputBuffer.getChannelData(0);
@@ -321,31 +485,313 @@ export class GeminiLiveAgent {
 
     remoteSource.connect(this.processorNode);
 
-    // Nó de ganho 0 necessário para forçar o ScriptProcessor a processar sem emitir eco local
     const dummyGain = this.audioCtx.createGain();
     dummyGain.gain.value = 0;
     this.processorNode.connect(dummyGain);
     dummyGain.connect(this.audioCtx.destination);
+
     // 5. Substitui a trilha do microfone físico pelo áudio da IA no WebRTC
     const sender = this.pc.getSenders().find((s) => s.track && s.track.kind === "audio");
     const aiTrack = this.mediaDestNode.stream.getAudioTracks()[0];
     if (sender && aiTrack) {
       await sender.replaceTrack(aiTrack);
-    } else {
-      console.warn("[GeminiAgent] ⚠️ Não encontrou sender de áudio ou aiTrack!", { sender: !!sender, aiTrack: !!aiTrack });
     }
 
-    // Suprime o microfone do operador local (desativa a trilha para não enviar nada)
+    // Suprime o microfone do operador local
     this.micStream.getAudioTracks().forEach((track) => {
       track.enabled = false;
     });
 
-    // Registra o agente de IA como ativo para esta chamada
     useAIAgents.getState().setAgentActive(this.callId, true);
     console.log("[GeminiAgent] Agente de voz IA ativo para a chamada.");
   }
 
+  private async waitForAudioFinish(): Promise<void> {
+    return new Promise((resolve) => {
+      const check = () => {
+        if (this.player && this.player.isPlaying()) {
+          setTimeout(check, 100);
+        } else {
+          // Pequeno delay adicional para transição suave
+          setTimeout(resolve, 350);
+        }
+      };
+      check();
+    });
+  }
+
+  async handleToolCall(name: string, args: any): Promise<any> {
+    const call = useCalls.getState().calls.find((c) => c.callId === this.callId);
+
+    if (name === "hangup") {
+      console.log("[GeminiAgent] Tool hangup disparada. Aguardando fim da fala...");
+      setTimeout(async () => {
+        await this.waitForAudioFinish();
+        this.detach().catch(() => {});
+        if (call) {
+          fetch(apiUrl(`/api/sessions/${call.sessionId}/calls/${this.callId}`), {
+            method: "DELETE",
+            headers: {
+              "X-API-Key": getApiKey(),
+              "X-Client-Id": getClientId(),
+            }
+          }).catch(() => {});
+        }
+      }, 100);
+      return { status: "chamada será desligada após a despedida" };
+    }
+
+    if (name === "human_transfer") {
+      console.log("[GeminiAgent] Tool human_transfer disparada. Aguardando fim da fala...");
+      setTimeout(async () => {
+        await this.waitForAudioFinish();
+        this.detach().catch(() => {});
+        toast.warning("A IA transferiu a chamada para você! Pegue o fone.");
+
+        // Toca aviso sonoro (synth beep)
+        try {
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          const ctx = new AudioContextClass();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.4);
+        } catch {}
+      }, 100);
+      return { status: "transferência iniciada" };
+    }
+
+    if (name === "send_message") {
+      console.log("[GeminiAgent] Tool send_message disparada.", args);
+      if (!call) return { error: "chamada não encontrada" };
+      const to = args.to || call.peer;
+      const text = args.message;
+
+      const response = await fetch(apiUrl(`/api/sessions/${call.sessionId}/messages/text`), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": getApiKey(),
+          "X-Client-Id": getClientId(),
+        },
+        body: JSON.stringify({ to, text })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro ao enviar mensagem (${response.status})`);
+      }
+      return { status: "mensagem enviada via WhatsApp", recipient: to };
+    }
+
+    if (name === "schedule_call") {
+      console.log("[GeminiAgent] Tool schedule_call disparada.", args);
+      if (!call) return { error: "chamada não encontrada" };
+      const datetime = args.datetime;
+      const prompt = args.prompt;
+
+      if (!datetime) {
+        return { error: "data/hora inválida ou vazia" };
+      }
+
+      let scheduledDate = new Date(datetime);
+      if (isNaN(scheduledDate.getTime())) {
+        return { error: "formato de data/hora inválido. Use ISO 8601 (YYYY-MM-DDTHH:MM:SSZ)" };
+      }
+
+      try {
+        const { aiConfig } = await getAIConfig(call.sessionId);
+        if (aiConfig) {
+          let schedules: ScheduledCall[] = [];
+          try {
+            schedules = JSON.parse(aiConfig.scheduledCalls || "[]");
+          } catch {}
+
+          const newCall: ScheduledCall = {
+            id: Math.random().toString(36).substring(2, 11),
+            phone: call.peer,
+            time: scheduledDate.toISOString(),
+            active: true,
+            prompt: prompt || undefined
+          };
+
+          const nextConfig = {
+            ...aiConfig,
+            scheduledCalls: JSON.stringify([...schedules, newCall])
+          };
+
+          await setAIConfig(call.sessionId, nextConfig);
+          
+          if (useSessions.getState().activeId === call.sessionId) {
+            useAIAgents.getState().setActiveSessionConfig(nextConfig);
+          }
+          console.log(`[GeminiAgent] Sucesso ao reagendar ligação para ${call.peer} em ${scheduledDate.toISOString()}`);
+          return { status: "ligação agendada com sucesso", time: scheduledDate.toISOString() };
+        } else {
+          return { error: "configuração de IA não encontrada" };
+        }
+      } catch (e) {
+        console.error("Erro ao salvar agendamento via tool:", e);
+        return { error: `erro ao salvar agendamento: ${(e as Error).message}` };
+      }
+    }
+
+    // Custom tools (Webhooks proxy)
+    console.log(`[GeminiAgent] Tool customizada ${name} disparada.`, args);
+    const tool = this.config.customTools?.find((t) => t.name === name);
+    if (!tool) {
+      throw new Error(`Ferramenta customizada ${name} não cadastrada`);
+    }
+
+    const response = await fetch(apiUrl(`/api/sessions/${call?.sessionId}/tool-proxy`), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": getApiKey(),
+        "X-Client-Id": getClientId(),
+      },
+      body: JSON.stringify({
+        url: tool.webhookUrl,
+        payload: args
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erro no webhook proxy (${response.status})`);
+    }
+    return response.json();
+  }
+
+  async executePostCallActions(): Promise<void> {
+    const lines = useAIAgents.getState().transcripts[this.callId];
+    if (!lines || lines.length === 0) {
+      console.log("[GeminiAgent] Nenhuma transcrição disponível para gerar resumo.");
+      return;
+    }
+
+    const call = useCalls.getState().calls.find((c) => c.callId === this.callId);
+    if (!call) return;
+
+    // Transforma as linhas de transcrição em texto estruturado
+    const transcriptText = lines
+      .map((l) => `${l.speaker === "ai" ? "IA" : "Cliente"}: ${l.text}`)
+      .join("\n");
+
+    console.log("[GeminiAgent] Gerando resumo da chamada...");
+
+    // Chama API REST do Gemini para gerar o resumo
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.config.geminiApiKey}`;
+    
+    const formattedDate = new Date(call.startedAt).toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+
+    const prompt = `Analise a transcrição abaixo e gere um resumo muito objetivo e formatado para WhatsApp (use *negrito* nos títulos e emojis). Seja extremamente conciso.
+
+📞 *RESUMO DE ATENDIMENTO*
+• *Contato*: ${call.peer}
+• *Horário*: ${formattedDate}
+• *Sentido*: ${call.direction === "inbound" ? "Recebida" : "Efetuada"}
+
+🎯 *Assunto principal*: (máximo 1 frase)
+📝 *Pontos tratados*: (máximo 3 tópicos rápidos)
+🤝 *Ações/Decisões*: (máximo 2 tópicos rápidos ou "Nenhuma")
+
+Não crie introduções ou conclusões. Resuma diretamente nos tópicos acima.
+
+Transcrição:
+${transcriptText}`;
+
+    const response = await fetch(geminiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }]
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erro ao gerar resumo no Gemini (${response.status})`);
+    }
+
+    const data = await response.json();
+    const summary = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!summary) {
+      throw new Error("Resposta de resumo vazia");
+    }
+
+    console.log("[GeminiAgent] Resumo gerado com sucesso:", summary);
+
+    // Ação 1: Enviar resumo para o Admin
+    if (this.config.postCall.sendAdmin && this.config.postCall.adminNumber) {
+      console.log("[GeminiAgent] Enviando resumo para o Administrador...");
+      await fetch(apiUrl(`/api/sessions/${call.sessionId}/messages/text`), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": getApiKey(),
+          "X-Client-Id": getClientId(),
+        },
+        body: JSON.stringify({
+          to: this.config.postCall.adminNumber,
+          text: `*Resumo da Chamada com ${call.peer}:*\n\n${summary}`
+        })
+      }).catch((e) => console.error("Erro ao enviar resumo ao Admin:", e));
+    }
+
+    // Ação 2: Enviar resumo para o Cliente
+    if (this.config.postCall.sendClient) {
+      console.log("[GeminiAgent] Enviando resumo para o Cliente...");
+      await fetch(apiUrl(`/api/sessions/${call.sessionId}/messages/text`), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": getApiKey(),
+          "X-Client-Id": getClientId(),
+        },
+        body: JSON.stringify({
+          to: call.peer,
+          text: `*Resumo do nosso contato de hoje:*\n\n${summary}`
+        })
+      }).catch((e) => console.error("Erro ao enviar resumo ao Cliente:", e));
+    }
+
+    // Ação 3: Disparar Webhook pós-chamada com JSON completo
+    if (this.config.postCall.webhookEnabled && this.config.postCall.webhookUrl) {
+      console.log("[GeminiAgent] Disparando webhook pós-chamada...");
+      await fetch(apiUrl(`/api/sessions/${call.sessionId}/tool-proxy`), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": getApiKey(),
+          "X-Client-Id": getClientId(),
+        },
+        body: JSON.stringify({
+          url: this.config.postCall.webhookUrl,
+          payload: {
+            callId: this.callId,
+            peer: call.peer,
+            direction: call.direction,
+            startedAt: new Date(call.startedAt).toISOString(),
+            transcript: lines,
+            summary: summary
+          }
+        })
+      }).catch((e) => console.error("Erro ao disparar webhook pós-chamada:", e));
+    }
+  }
+
   async detach(): Promise<void> {
+    if (this.detached) return;
+    this.detached = true;
     console.log("[GeminiAgent] Desacoplando agente de voz...");
 
     // Imprime a última frase da conversa se houver
@@ -357,6 +803,13 @@ export class GeminiLiveAgent {
       }
     } catch (e) {
       console.error("[GeminiAgent] Erro ao imprimir última frase no console", e);
+    }
+
+    // Executa Ações Pós-Chamada se configurado
+    if (this.config.postCall?.summaryEnabled) {
+      this.executePostCallActions().catch((e) => {
+        console.error("[GeminiAgent] Erro nas ações pós-chamada:", e);
+      });
     }
 
     // 1. Restaura o microfone físico original do operador no WebRTC

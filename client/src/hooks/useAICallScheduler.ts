@@ -87,6 +87,10 @@ export const useAICallScheduler = () => {
           .mutateAsync({ phone: toTrigger.phone, record: false })
           .then((callId) => {
             console.log("[useAICallScheduler] Chamada programada disparada com sucesso! ID:", callId);
+            // Registra o prompt complementar se houver
+            if (toTrigger.prompt) {
+              useAIAgents.getState().setCustomPrompt(callId, toTrigger.prompt);
+            }
             // Sinaliza para o hook useAICallHandler que a IA deve assumir esta chamada assim que ela conectar
             useAIAgents.getState().addScheduledInProgress(callId);
           })

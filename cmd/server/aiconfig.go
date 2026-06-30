@@ -5,18 +5,46 @@ import (
 	"net/http"
 )
 
+type ToolParam struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	Required    bool   `json:"required"`
+}
+
+type CustomTool struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	WebhookURL  string      `json:"webhookUrl"`
+	Parameters  []ToolParam `json:"parameters"`
+}
+
+type PostCallActions struct {
+	SummaryEnabled bool   `json:"summaryEnabled"`
+	SendAdmin      bool   `json:"sendAdmin"`
+	AdminNumber    string `json:"adminNumber"`
+	SendClient     bool   `json:"sendClient"`
+	WebhookEnabled bool   `json:"webhookEnabled"`
+	WebhookURL     string `json:"webhookUrl"`
+}
+
 type AIConfig struct {
-	GeminiAPIKey      string  `json:"geminiApiKey"`
-	VoiceName         string  `json:"voiceName"`
-	LanguageCode      string  `json:"languageCode"`
-	SystemInstruction string  `json:"systemInstruction"`
-	AutoAnswer        bool    `json:"autoAnswer"`
-	Temperature       float64 `json:"temperature"`
-	MaxDurationMin    int     `json:"maxDurationMin"`
-	SilenceOperator   bool    `json:"silenceOperator"`
-	TranscribeAudio   bool    `json:"transcribeAudio"`
-	ScheduledCalls    string  `json:"scheduledCalls"` // Array JSON de agendamentos
-	FirstUtterance    string  `json:"firstUtterance"`
+	GeminiAPIKey      string          `json:"geminiApiKey"`
+	VoiceName         string          `json:"voiceName"`
+	LanguageCode      string          `json:"languageCode"`
+	SystemInstruction string          `json:"systemInstruction"`
+	AutoAnswer        bool            `json:"autoAnswer"`
+	Temperature       float64         `json:"temperature"`
+	MaxDurationMin    int             `json:"maxDurationMin"`
+	SilenceOperator   bool            `json:"silenceOperator"`
+	TranscribeAudio   bool            `json:"transcribeAudio"`
+	ScheduledCalls    string          `json:"scheduledCalls"` // Array JSON de agendamentos
+	FirstUtterance    string          `json:"firstUtterance"`
+	ToolsEnabled      bool            `json:"toolsEnabled"`
+	PredefinedTools   []string        `json:"predefinedTools"`
+	CustomTools       []CustomTool    `json:"customTools"`
+	PostCall          PostCallActions `json:"postCall"`
+	CustomFields      string          `json:"customFields"`
 }
 
 func (s *server) handleSetAIConfig(w http.ResponseWriter, r *http.Request) {

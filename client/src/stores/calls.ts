@@ -17,6 +17,8 @@ export const useCalls = create<State>(() => ({
   incoming: null,
 }));
 
+import { useAIAgents } from "@/stores/ai";
+
 let wired = false;
 export const ensureCallsWired = (): void => {
   if (wired) return;
@@ -33,6 +35,12 @@ export const ensureCallsWired = (): void => {
         ),
       }));
     } else if (ev.type === "call-ended") {
+      // Desacopla o agente de IA se houver um ativo para esta chamada
+      const agent = useAIAgents.getState().activeAgents.get(ev.id);
+      if (agent) {
+        agent.detach().catch(console.error);
+        useAIAgents.getState().activeAgents.delete(ev.id);
+      }
       useCalls.setState((s) => {
         const conn = s.ownConnections.get(ev.id);
         if (conn) conn.close();

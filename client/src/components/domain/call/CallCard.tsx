@@ -26,9 +26,12 @@ const Meter = ({ label, db }: { label: string; db: number }) => {
   const pct = Math.max(0, Math.min(100, Math.round(((db + 60) / 60) * 100)));
   return (
     <div className="space-y-1">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <div className="h-2 overflow-hidden rounded-full bg-muted">
-        <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-primary/70 to-primary transition-all duration-100"
+          style={{ width: `${pct}%` }}
+        />
       </div>
     </div>
   );
@@ -45,7 +48,7 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const [peerDb, setPeerDb] = useState(-60);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Estados e Stores da IA de Voz
+  // AI voice states
   const [aiConfig, setAiConfig] = useState<AIConfig | null>(null);
   const [busyAI, setBusyAI] = useState(false);
   const isAIActive = useAIAgents((s) => s.activeAgentCalls.has(call.callId));
@@ -56,7 +59,6 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
     return () => clearInterval(t);
   }, []);
 
-  // Carrega a configuração da IA para esta sessão
   useEffect(() => {
     getAIConfig(call.sessionId)
       .then((r) => {
@@ -97,7 +99,6 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
     setBusyAI(true);
     try {
       if (isAIActive) {
-        // Desativa a IA recuperando o microfone físico
         const agent = useAIAgents.getState().activeAgents.get(call.callId);
         if (agent) {
           await agent.detach();
@@ -105,7 +106,6 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
         useAIAgents.getState().setAgentInstance(call.callId, null);
         toast.info("IA de voz desconectada. Controle do microfone restaurado.");
       } else {
-        // Ativa a IA passando o áudio para o Gemini Live
         const { GeminiLiveAgent } = await import("@/lib/gemini-live");
         const remoteStream = conn.remoteStream;
         if (!remoteStream) {
@@ -125,7 +125,6 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
       }
     } catch (e) {
       toast.error(`Falha ao alternar IA: ${(e as Error).message}`);
-      // Fallback: garante desprendimento se falhar
       const agent = useAIAgents.getState().activeAgents.get(call.callId);
       if (agent) {
         await agent.detach().catch(() => {});
@@ -137,16 +136,16 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   };
 
   return (
-    <Card>
+    <Card className="card-premium">
       <CardContent className="space-y-3 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="truncate font-medium">{call.peer}</p>
+            <p className="truncate font-semibold">{call.peer}</p>
             <Badge variant={statusVariant[call.status]} className="mt-1">
               {formatCallDuration(call.startedAt, call.status)}
             </Badge>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {conn && aiConfig && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -155,10 +154,14 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
                     size="icon"
                     disabled={busyAI}
                     onClick={toggleAI}
-                    className={isAIActive ? "bg-amber-500 hover:bg-amber-600 text-white" : ""}
+                    className={
+                      isAIActive
+                        ? "bg-amber-500 hover:bg-amber-600 text-white animate-pulse-glow"
+                        : ""
+                    }
                     aria-label={isAIActive ? "Desativar IA" : "Ativar IA"}
                   >
-                    <Sparkles className={`h-4 w-4 ${isAIActive ? "animate-pulse fill-white/20" : "text-amber-500"}`} />
+                    <Sparkles className={`h-4 w-4 ${isAIActive ? "fill-white/20" : "text-amber-500"}`} />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>{isAIActive ? "Desativar IA" : "Ativar IA"}</TooltipContent>
@@ -179,12 +182,15 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
             </Tooltip>
           </div>
         </div>
-        <Meter label="Mic" db={micDb} />
-        <Meter label="Peer" db={peerDb} />
-        
-        {/* Renderiza a transcrição da chamada em tempo real */}
+
+        <div className="space-y-2">
+          <Meter label="Mic" db={micDb} />
+          <Meter label="Peer" db={peerDb} />
+        </div>
+
+        {/* Real-time transcription */}
         {transcripts.length > 0 && (
-          <div className="mt-3 border-t pt-3 space-y-2 max-h-36 overflow-y-auto text-xs bg-muted/20 p-2 rounded-md font-sans">
+          <div className="border-t pt-3 space-y-2 max-h-36 overflow-y-auto text-xs bg-muted/20 p-2.5 rounded-md custom-scrollbar animate-fade-in">
             <p className="font-semibold text-[10px] text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
               <Sparkles className="h-3 w-3 text-amber-500 fill-amber-500/10" /> Transcrição em tempo real
             </p>
