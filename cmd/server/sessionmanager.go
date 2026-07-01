@@ -20,6 +20,7 @@ type SessionManager struct {
 	waLogger waLog.Logger
 	log      *slog.Logger
 	maxCalls int
+	Scheduler *AIScheduler
 
 	mu       sync.RWMutex
 	sessions map[string]*Session

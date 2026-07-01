@@ -133,8 +133,8 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
       <Separator className="my-1" />
 
       <Button variant="outline" className="w-full gap-2" onClick={onNew} disabled={creating}>
-        {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-        New session
+        {creating ? <Loader2 key="loader" className="h-4 w-4 animate-spin" /> : <Plus key="plus" className="h-4 w-4" />}
+        <span>New session</span>
       </Button>
 
       <ConfirmDialog

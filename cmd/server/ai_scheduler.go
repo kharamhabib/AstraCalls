@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"time"
 
 	"wacalls/internal/voip/call"
@@ -18,18 +19,40 @@ type AIScheduler struct {
 	log  *slog.Logger
 	stop chan struct{}
 
-	// Rastreia agentes ativos por callID para evitar duplicação
-	agents map[string]*ServerAIAgent
+	mu            sync.Mutex
+	agents        map[string]*ServerAIAgent
+	triggeringIds map[string]bool
+	callToSched   map[string]string
 }
 
 // NewAIScheduler cria um novo scheduler.
 func NewAIScheduler(mgr *SessionManager, log *slog.Logger) *AIScheduler {
 	return &AIScheduler{
-		mgr:    mgr,
-		log:    log,
-		stop:   make(chan struct{}),
-		agents: make(map[string]*ServerAIAgent),
+		mgr:           mgr,
+		log:           log,
+		stop:          make(chan struct{}),
+		agents:        make(map[string]*ServerAIAgent),
+		triggeringIds: make(map[string]bool),
+		callToSched:   make(map[string]string),
 	}
+}
+
+func (s *AIScheduler) isTriggering(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.triggeringIds[id]
+}
+
+func (s *AIScheduler) setTriggering(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.triggeringIds[id] = true
+}
+
+func (s *AIScheduler) clearTriggering(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.triggeringIds, id)
 }
 
 // Run inicia o ticker que verifica agendamentos a cada 10 segundos.
@@ -109,6 +132,10 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 			continue
 		}
 		if t.Before(now) || t.Equal(now) {
+			id, _ := sched["id"].(string)
+			if id != "" && s.isTriggering(id) {
+				continue
+			}
 			toTrigger = sched
 			toTriggerIdx = i
 			break
@@ -121,8 +148,13 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 
 	phone, _ := toTrigger["phone"].(string)
 	prompt, _ := toTrigger["prompt"].(string)
+	id, _ := toTrigger["id"].(string)
 	if phone == "" {
 		return
+	}
+
+	if id != "" {
+		s.setTriggering(id)
 	}
 
 	s.log.Info("[AIScheduler] Disparando agendamento automático", "phone", phone, "session", sess.id)
@@ -138,6 +170,9 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 	// Sessão WhatsApp precisa estar pareada
 	if sess.client.Store.ID == nil {
 		s.log.Warn("[AIScheduler] Sessão não pareada, ignorando agendamento", "session", sess.id)
+		if id != "" {
+			s.clearTriggering(id)
+		}
 		return
 	}
 
@@ -146,10 +181,19 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 	callID, err := sess.startOutgoing(ctx, peer, false)
 	if err != nil {
 		s.log.Error("[AIScheduler] Erro ao iniciar chamada", "err", err, "phone", phone)
+		if id != "" {
+			s.clearTriggering(id)
+		}
 		return
 	}
 
 	s.log.Info("[AIScheduler] Chamada iniciada", "callId", callID, "phone", phone)
+
+	if id != "" {
+		s.mu.Lock()
+		s.callToSched[callID] = id
+		s.mu.Unlock()
+	}
 
 	// Marca o owner como __server__
 	sess.mgr.broker.setOwner(callID, serverOwnerID)
@@ -191,7 +235,9 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 				s.log.Error("[AIScheduler] Erro ao iniciar agente", "err", err, "callId", callID)
 				return
 			}
+			s.mu.Lock()
 			s.agents[callID] = agent
+			s.mu.Unlock()
 			s.log.Info("[AIScheduler] Agente IA acoplado à chamada agendada", "callId", callID)
 		}
 	}
@@ -199,8 +245,14 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 
 // CleanupAgent remove um agente ao encerrar a chamada.
 func (s *AIScheduler) CleanupAgent(callID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if agent, ok := s.agents[callID]; ok {
 		agent.Detach()
 		delete(s.agents, callID)
+	}
+	if schedID, ok := s.callToSched[callID]; ok {
+		delete(s.triggeringIds, schedID)
+		delete(s.callToSched, callID)
 	}
 }

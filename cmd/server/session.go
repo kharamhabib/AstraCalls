@@ -133,6 +133,9 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	cm.OnEnded = func(c *call.CallInfo) {
 		s.removeCall(c.CallID)
 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
+		if s.mgr.Scheduler != nil {
+			s.mgr.Scheduler.CleanupAgent(c.CallID)
+		}
 	}
 	cm.OnPeerAudio = func(pcm16 []float32) {
 		ac, ok := s.reg.get(callID)
@@ -256,7 +259,9 @@ func (s *Session) handleEvent(rawEvt any) {
 		s.onIncomingOffer(ctx, evt)
 	case *events.CallAccept:
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
-			ac.cm.HandleCallAccept(ctx, wrapCall(evt.From, evt.Data), evt.From)
+			if currCall := ac.cm.CurrentCall(); currCall != nil && currCall.Direction == core.CallDirectionOutgoing {
+				ac.cm.HandleCallAccept(ctx, wrapCall(evt.From, evt.Data), evt.From)
+			}
 		}
 	case *events.CallTransport:
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {

@@ -96,7 +96,7 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
               onClick={handleSave}
               disabled={renaming}
             >
-              {renaming ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-4 w-4" />}
+              {renaming ? <Loader2 key="loader" className="h-3 w-3 animate-spin" /> : <Check key="check" className="h-4 w-4" />}
             </Button>
             <Button
               size="icon"
@@ -129,13 +129,13 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
         {session.paired && <HistoryDrawer sid={session.id} />}
         {session.paired ? (
           <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => logoutSession(session.id))}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
-            Disconnect
+            {busy ? <Loader2 key="loader" className="h-4 w-4 animate-spin" /> : <Power key="power" className="h-4 w-4" />}
+            <span>Disconnect</span>
           </Button>
         ) : (
           <Button size="sm" disabled={busy} onClick={() => run(() => pairSession(session.id))}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
-            Reactivate
+            {busy ? <Loader2 key="loader" className="h-4 w-4 animate-spin" /> : <QrCode key="qrcode" className="h-4 w-4" />}
+            <span>Reactivate</span>
           </Button>
         )}
       </div>

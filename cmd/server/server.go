@@ -41,6 +41,7 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	mgr := newSessionManager(ctx, provider, broker, store, waLogger, log, maxCalls)
 	broker.SnapshotFn = mgr.snapshotEvents
 	scheduler := NewAIScheduler(mgr, log)
+	mgr.Scheduler = scheduler
 
 	return &server{broker: broker, sessions: mgr, scheduler: scheduler, log: log, staticDir: staticDir}, nil
 }

@@ -46,6 +46,31 @@ type CallManager struct {
 	OnIncoming    func(*CallInfo)
 	OnEnded       func(*CallInfo)
 	OnPeerAudio   func([]float32)
+
+	recvMu        sync.Mutex
+	lastRtpSeq    uint16
+	rtpHistory    [64]uint16
+	rtpHistoryIdx int
+	hasRtpHistory bool
+}
+
+func (m *CallManager) isDuplicateRtp(seq uint16) bool {
+	if !m.hasRtpHistory {
+		m.hasRtpHistory = true
+		m.rtpHistory[0] = seq
+		m.rtpHistoryIdx = 1
+		m.lastRtpSeq = seq
+		return false
+	}
+	for i := 0; i < len(m.rtpHistory); i++ {
+		if m.rtpHistory[i] == seq {
+			return true
+		}
+	}
+	m.rtpHistory[m.rtpHistoryIdx] = seq
+	m.rtpHistoryIdx = (m.rtpHistoryIdx + 1) % len(m.rtpHistory)
+	m.lastRtpSeq = seq
+	return false
 }
 
 func NewCallManager(sock core.VoipSocket, log *slog.Logger) *CallManager {

@@ -1,6 +1,7 @@
 package call
 
 import (
+	"encoding/binary"
 	"time"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
@@ -118,6 +119,15 @@ func (m *CallManager) onRelayData(data []byte) {
 	}
 	pt := data[1] & 0x7f
 	if pt != core.PayloadTypeWhatsAppOpus {
+		return
+	}
+
+	seq := binary.BigEndian.Uint16(data[2:4])
+
+	m.recvMu.Lock()
+	defer m.recvMu.Unlock()
+
+	if m.isDuplicateRtp(seq) {
 		return
 	}
 

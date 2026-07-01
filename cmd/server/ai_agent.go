@@ -371,6 +371,20 @@ func (a *ServerAIAgent) toolSendMessage(ctx context.Context, args map[string]any
 	return map[string]any{"status": "mensagem enviada com sucesso"}
 }
 
+// resolveContactPhone resolve o JID do peer para retornar o número de telefone (PN) real, convertendo de LID se necessário.
+func (a *ServerAIAgent) resolveContactPhone(ctx context.Context) string {
+	jid, err := types.ParseJID(a.peer)
+	if err != nil {
+		return a.peer
+	}
+	if jid.Server == "lid" && a.sess.client != nil && a.sess.client.Store.LIDs != nil {
+		if pn, e := a.sess.client.Store.LIDs.GetPNForLID(ctx, jid); e == nil && !pn.IsEmpty() {
+			return pn.User
+		}
+	}
+	return jid.User
+}
+
 // toolScheduleCall agenda uma ligação futura.
 func (a *ServerAIAgent) toolScheduleCall(ctx context.Context, args map[string]any) map[string]any {
 	datetimeStr, _ := args["datetime"].(string)
@@ -394,7 +408,7 @@ func (a *ServerAIAgent) toolScheduleCall(ctx context.Context, args map[string]an
 
 	newCall := map[string]any{
 		"id":     fmt.Sprintf("srv_%d", time.Now().UnixNano()),
-		"phone":  normalizePhone(a.peer),
+		"phone":  normalizePhone(a.resolveContactPhone(ctx)),
 		"time":   scheduledDate.Format(time.RFC3339),
 		"active": true,
 	}
