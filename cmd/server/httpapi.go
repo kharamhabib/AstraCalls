@@ -10,6 +10,7 @@ import (
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -30,6 +31,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/reject", s.handleReject)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
 	mux.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
+	mux.HandleFunc("POST /api/sessions/{sid}/history/{callId}/summary", s.handleSaveCallSummary)
 
 	// Mensageria (whatsmeow)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/text", s.handleSendText)
@@ -55,6 +57,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{sid}/ai-config", s.handleGetAIConfig)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/ai-config", s.handleDeleteAIConfig)
 	mux.HandleFunc("POST /api/sessions/{sid}/tool-proxy", s.handleToolProxy)
+
+	mux.HandleFunc("GET /api/sessions/{sid}/contacts/{jid}", s.handleGetContactInfo)
 
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
@@ -244,9 +248,81 @@ func (s *server) handleEndCall(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"rows": s.broker.historyRows(sess.id, 50)})
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
 	}
+	rawRows := s.broker.historyRows(sess.id, 50)
+	
+	type ExtendedRow struct {
+		CallID    string `json:"callId"`
+		Peer      string `json:"peer"`
+		Phone     string `json:"phone"`
+		Name      string `json:"name,omitempty"`
+		Direction string `json:"direction"`
+		StartedAt int64  `json:"startedAt"`
+		EndedAt   *int64 `json:"endedAt,omitempty"`
+		EndReason string `json:"endReason,omitempty"`
+		Summary   string `json:"summary,omitempty"`
+	}
+	
+	rows := make([]ExtendedRow, 0, len(rawRows))
+	for _, row := range rawRows {
+		phone := row.Peer
+		name := ""
+		
+		jid, err := types.ParseJID(row.Peer)
+		if err == nil {
+			phone = jid.User
+			if jid.Server == "lid" && sess.client != nil && sess.client.Store.LIDs != nil {
+				if pn, err := sess.client.Store.LIDs.GetPNForLID(r.Context(), jid); err == nil && !pn.IsEmpty() {
+					phone = pn.User
+					jid = pn
+				}
+			}
+			if sess.client != nil {
+				if contact, err := sess.client.Store.Contacts.GetContact(r.Context(), jid); err == nil && contact.Found {
+					if contact.FullName != "" {
+						name = contact.FullName
+					} else if contact.PushName != "" {
+						name = contact.PushName
+					}
+				}
+			}
+		}
+		
+		rows = append(rows, ExtendedRow{
+			CallID:    row.CallID,
+			Peer:      row.Peer,
+			Phone:     phone,
+			Name:      name,
+			Direction: row.Direction,
+			StartedAt: row.StartedAt,
+			EndedAt:   row.EndedAt,
+			EndReason: row.EndReason,
+			Summary:   row.Summary,
+		})
+	}
+	
+	writeJSON(w, http.StatusOK, map[string]any{"rows": rows})
+}
+
+func (s *server) handleSaveCallSummary(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	callID := r.PathValue("callId")
+	var body struct {
+		Summary string `json:"summary"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	
+	s.broker.saveSummary(sess.id, callID, body.Summary)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "summary saved"})
 }
 
 func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Request) {
@@ -368,6 +444,56 @@ func (s *server) doEndCall(sess *Session, w http.ResponseWriter, r *http.Request
 	sess.removeCall(id)
 	s.broker.endCall(id, string(core.EndCallReasonUserEnded))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleGetContactInfo(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	jidStr := r.PathValue("jid")
+	jid, err := types.ParseJID(jidStr)
+	if err != nil {
+		jid = types.NewJID(normalizePhone(jidStr), types.DefaultUserServer)
+	}
+
+	var phone string = jid.User
+	if jid.Server == "lid" && sess.client.Store.LIDs != nil {
+		if pn, err := sess.client.Store.LIDs.GetPNForLID(r.Context(), jid); err == nil && !pn.IsEmpty() {
+			phone = pn.User
+			jid = pn
+		}
+	}
+
+	var name string
+	contact, err := sess.client.Store.Contacts.GetContact(r.Context(), jid)
+	if err == nil && contact.Found {
+		if contact.FullName != "" {
+			name = contact.FullName
+		} else if contact.FirstName != "" {
+			name = contact.FirstName
+		} else if contact.PushName != "" {
+			name = contact.PushName
+		}
+	}
+	if name == "" {
+		name = jid.User
+	}
+
+	var pictureURL string
+	pfp, err := sess.client.GetProfilePictureInfo(r.Context(), jid, &whatsmeow.GetProfilePictureParams{
+		Preview: true,
+	})
+	if err == nil && pfp != nil {
+		pictureURL = pfp.URL
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"jid":        jid.String(),
+		"phone":      phone,
+		"name":       name,
+		"pictureUrl": pictureURL,
+	})
 }
 
 func normalizePhone(p string) string {

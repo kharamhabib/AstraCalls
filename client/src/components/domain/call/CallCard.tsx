@@ -14,6 +14,7 @@ import { useAIAgents } from "@/stores/ai";
 import { getAIConfig } from "@/services/ai";
 import type { AIConfig } from "@/types/ai";
 import { toast } from "sonner";
+import { useContactInfo } from "@/hooks/useContactInfo";
 
 const statusVariant: Record<CallStatus, "success" | "secondary" | "muted"> = {
   connected: "success",
@@ -39,6 +40,14 @@ const Meter = ({ label, db }: { label: string; db: number }) => {
 
 const EMPTY_TRANSCRIPT: any[] = [];
 
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
 export const CallCard = ({ call }: { call: CallSummary }) => {
   const conn = useCalls((s) => s.ownConnections.get(call.callId));
   const outDeviceId = useDevices((s) => s.outId);
@@ -53,6 +62,8 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const [busyAI, setBusyAI] = useState(false);
   const isAIActive = useAIAgents((s) => s.activeAgentCalls.has(call.callId));
   const transcripts = useAIAgents((s) => s.transcripts[call.callId] || EMPTY_TRANSCRIPT);
+
+  const { data: contact } = useContactInfo(call.sessionId, call.peer);
 
   useEffect(() => {
     const t = setInterval(() => force((n) => n + 1), 1000);
@@ -139,11 +150,31 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
     <Card className="card-premium">
       <CardContent className="space-y-3 p-4">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="truncate font-semibold">{call.peer}</p>
-            <Badge variant={statusVariant[call.status]} className="mt-1">
-              {formatCallDuration(call.startedAt, call.status)}
-            </Badge>
+          <div className="flex items-center gap-3 min-w-0">
+            {contact?.pictureUrl ? (
+              <img
+                src={contact.pictureUrl}
+                alt={contact.name}
+                className="h-11 w-11 rounded-full object-cover border border-primary/10 shadow-sm"
+              />
+            ) : (
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground font-semibold text-sm border border-primary/5">
+                {contact ? getInitials(contact.name) : "?"}
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="truncate font-bold text-sm text-foreground">
+                {contact ? contact.name : call.peer}
+              </p>
+              {contact && contact.name !== call.peer && (
+                <p className="text-[10px] text-muted-foreground font-mono truncate max-w-[150px]">
+                  {call.peer.split("@")[0]}
+                </p>
+              )}
+              <Badge variant={statusVariant[call.status]} className="mt-1 h-4 text-[9px] px-1.5 font-medium">
+                {formatCallDuration(call.startedAt, call.status)}
+              </Badge>
+            </div>
           </div>
           <div className="flex items-center gap-1.5">
             {conn && aiConfig && (

@@ -46,4 +46,6 @@ export type ScheduledCall = {
   time: string; // Data/Hora no formato ISO string (ex. 2026-06-28T19:30:00.000Z)
   active: boolean;
   prompt?: string; // Motivo ou roteiro personalizado para a IA seguir na ligação
+  callId?: string; // ID da chamada iniciada por este agendamento
+  summary?: string; // Resumo do atendimento gerado ao fim da ligação
 };

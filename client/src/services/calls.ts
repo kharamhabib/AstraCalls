@@ -1,4 +1,4 @@
-import { apiPost, apiDelete } from "@/lib/api";
+import { apiGet, apiPost, apiDelete } from "@/lib/api";
 import { getClientId } from "@/lib/client-id";
 import { apiUrl, getApiKey } from "@/lib/auth";
 
@@ -23,3 +23,8 @@ export const rejectCall = async (sid: string, callId: string): Promise<void> => 
 
 export const endCall = (sid: string, callId: string) =>
   apiDelete(`/api/sessions/${sid}/calls/${callId}`);
+
+export const getContactInfo = (sid: string, jid: string) =>
+  apiGet<{ jid: string; phone: string; name: string; pictureUrl: string }>(
+    `/api/sessions/${sid}/contacts/${encodeURIComponent(jid)}`
+  );

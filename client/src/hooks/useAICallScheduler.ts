@@ -69,8 +69,10 @@ export const useAICallScheduler = () => {
         console.log("[useAICallScheduler] Disparando agendamento automático para:", toTrigger.phone);
         toast.info(`Disparando ligação programada automática para ${toTrigger.phone}...`);
 
-        // Remove o agendamento disparado da lista local (agendamento de disparo único)
-        const nextSchedules = schedules.filter((s) => s.id !== toTrigger.id);
+        // Marca o agendamento como inativo (concluído) em vez de excluir
+        const nextSchedules = schedules.map((s) =>
+          s.id === toTrigger.id ? { ...s, active: false } : s
+        );
         const nextConfig = {
           ...activeConfig,
           scheduledCalls: JSON.stringify(nextSchedules),
@@ -93,6 +95,25 @@ export const useAICallScheduler = () => {
             }
             // Sinaliza para o hook useAICallHandler que a IA deve assumir esta chamada assim que ela conectar
             useAIAgents.getState().addScheduledInProgress(callId);
+
+            // Vincula o callId gerado ao agendamento inativado
+            getAIConfig(activeId).then(({ enabled, aiConfig }) => {
+              if (enabled && aiConfig) {
+                let currentSchedules: ScheduledCall[] = [];
+                try {
+                  currentSchedules = JSON.parse(aiConfig.scheduledCalls || "[]");
+                } catch {}
+                const updated = currentSchedules.map((s) =>
+                  s.id === toTrigger.id ? { ...s, callId } : s
+                );
+                const nextConfig = {
+                  ...aiConfig,
+                  scheduledCalls: JSON.stringify(updated),
+                };
+                setActiveConfig(nextConfig);
+                setAIConfig(activeId, nextConfig).catch(() => {});
+              }
+            }).catch(() => {});
           })
           .catch((err) => {
             console.error("[useAICallScheduler] Falha ao disparar chamada agendada:", err);

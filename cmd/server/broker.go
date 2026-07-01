@@ -26,6 +26,7 @@ type CallRecord struct {
 	Status    CallStatus `json:"status"`
 	EndedAt   *int64     `json:"endedAt,omitempty"`
 	EndReason string     `json:"endReason,omitempty"`
+	Summary   string     `json:"summary,omitempty"`
 }
 
 type AuthSnapshot struct {
@@ -213,6 +214,20 @@ func (b *Broker) historyRows(sessionID string, limit int) []CallRecord {
 		}
 	}
 	return rows
+}
+
+func (b *Broker) saveSummary(sessionID, callID, summary string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i := range b.history {
+		if b.history[i].SessionID == sessionID && b.history[i].CallID == callID {
+			b.history[i].Summary = summary
+			break
+		}
+	}
+	if c, ok := b.calls[callID]; ok && c.SessionID == sessionID {
+		c.Summary = summary
+	}
 }
 
 func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string) {

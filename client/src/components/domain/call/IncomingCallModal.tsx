@@ -6,6 +6,7 @@ import { useCalls } from "@/stores/calls";
 import { useDevices } from "@/stores/devices";
 import { useAcceptCall } from "@/hooks/useAcceptCall";
 import { useRejectCall } from "@/hooks/useRejectCall";
+import { useContactInfo } from "@/hooks/useContactInfo";
 
 type RingHandle = { stop: () => void };
 
@@ -48,12 +49,22 @@ const startRingLoop = (): RingHandle | null => {
   };
 };
 
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
 export const IncomingCallModal = () => {
   const incoming = useCalls((s) => s.incoming);
   const micId = useDevices((s) => s.micId);
   const accept = useAcceptCall(micId);
   const reject = useRejectCall();
   const busy = accept.isPending || reject.isPending;
+
+  const { data: contact } = useContactInfo(incoming?.sessionId, incoming?.peer);
 
   useEffect(() => {
     if (!incoming) return;
@@ -68,20 +79,39 @@ export const IncomingCallModal = () => {
         onEscapeKeyDown={(e) => e.preventDefault()}
         onPointerDownOutside={(e) => e.preventDefault()}
         onInteractOutside={(e) => e.preventDefault()}
-        className="sm:max-w-sm"
+        className="sm:max-w-sm card-premium"
       >
-        <DialogHeader className="items-center text-center">
-          <div className="mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
-            <PhoneIncoming className="h-7 w-7" />
+        <DialogHeader className="items-center text-center space-y-3">
+          {contact?.pictureUrl ? (
+            <img
+              src={contact.pictureUrl}
+              alt={contact.name}
+              className="h-20 w-20 rounded-full object-cover border-4 border-primary/20 shadow-lg animate-pulse-glow"
+            />
+          ) : (
+            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/15 text-primary border-4 border-primary/10 shadow-md">
+              {contact ? (
+                <span className="text-2xl font-bold tracking-wider">{getInitials(contact.name)}</span>
+              ) : (
+                <PhoneIncoming className="h-10 w-10 animate-bounce" />
+              )}
+            </div>
+          )}
+          <div className="space-y-1">
+            <DialogTitle className="text-xl font-bold text-foreground">Chamada Recebida</DialogTitle>
+            <DialogDescription className="text-base font-semibold text-primary truncate max-w-[260px] mx-auto">
+              {contact ? contact.name : incoming?.peer}
+            </DialogDescription>
+            {contact && contact.name !== incoming?.peer && (
+              <p className="text-xs text-muted-foreground font-mono">{incoming?.peer.split("@")[0]}</p>
+            )}
           </div>
-          <DialogTitle>Incoming call</DialogTitle>
-          <DialogDescription className="truncate">{incoming?.peer}</DialogDescription>
         </DialogHeader>
-        <div className="mt-2 flex items-center justify-center gap-6">
+        <div className="mt-4 flex items-center justify-center gap-8">
           <Button
             variant="destructive"
             size="icon"
-            className="h-14 w-14 rounded-full"
+            className="h-14 w-14 rounded-full shadow-lg hover:scale-105 transition-transform duration-200"
             disabled={busy}
             onClick={() => incoming && reject.mutate({ sid: incoming.sessionId, callId: incoming.callId })}
             aria-label="Reject"
@@ -90,7 +120,7 @@ export const IncomingCallModal = () => {
           </Button>
           <Button
             size="icon"
-            className="h-14 w-14 rounded-full"
+            className="h-14 w-14 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg hover:scale-105 transition-transform duration-200"
             disabled={busy}
             onClick={() => incoming && accept.mutate({ sid: incoming.sessionId, callId: incoming.callId })}
             aria-label="Accept"
@@ -102,3 +132,4 @@ export const IncomingCallModal = () => {
     </Dialog>
   );
 };
+

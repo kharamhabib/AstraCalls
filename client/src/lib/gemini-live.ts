@@ -73,6 +73,7 @@ export class GeminiLiveSession {
   private onAudioReceived: (float32: Float32Array) => void = () => {};
   private onTextReceived: (speaker: "client" | "ai", text: string) => void = () => {};
   private onToolCallReceived: (name: string, args: any) => Promise<any> = async () => ({});
+  private onCloseCallback: () => void = () => {};
   public isConnected = false;
   public ready = false;
 
@@ -83,11 +84,13 @@ export class GeminiLiveSession {
   connect(
     onAudio: (data: Float32Array) => void,
     onText: (speaker: "client" | "ai", text: string) => void,
-    onToolCall: (name: string, args: any) => Promise<any>
+    onToolCall: (name: string, args: any) => Promise<any>,
+    onClose?: () => void
   ): Promise<void> {
     this.onAudioReceived = onAudio;
     this.onTextReceived = onText;
     this.onToolCallReceived = onToolCall;
+    if (onClose) this.onCloseCallback = onClose;
 
     return new Promise((resolve, reject) => {
       const apiKey = this.config.geminiApiKey;
@@ -146,7 +149,7 @@ export class GeminiLiveSession {
                 properties: {
                   datetime: {
                     type: "STRING",
-                    description: "Data e Hora do agendamento no formato ISO 8601 (ex: YYYY-MM-DDTHH:MM:SS-03:00). Calcule de forma relativa ao horário atual fornecido no prompt."
+                    description: "Data e Hora do agendamento no formato ISO 8601 em UTC (ex: YYYY-MM-DDTHH:MM:SSZ). Calcule de forma relativa ao horário atual fornecido no prompt."
                   },
                   prompt: {
                     type: "STRING",
@@ -284,6 +287,7 @@ export class GeminiLiveSession {
         console.log("[GeminiLive] Conexão WebSocket encerrada.");
         this.isConnected = false;
         this.ready = false;
+        this.onCloseCallback();
       };
     });
   }
@@ -299,15 +303,14 @@ export class GeminiLiveSession {
     }
 
     const payload = {
-      realtimeInput: {
-        toolResponse: {
-          functionResponses: [
-            {
-              response: { output: output },
-              id: fc.id
-            }
-          ]
-        }
+      toolResponse: {
+        functionResponses: [
+          {
+            name: fc.name,
+            id: fc.id,
+            response: { output: output }
+          }
+        ]
       }
     };
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -407,13 +410,21 @@ export class GeminiLiveAgent {
     const session = useSessions.getState().sessions.find((s) => s.id === call?.sessionId);
     const sessionName = session?.name || "WhatsApp";
 
-    const now = new Date().toLocaleString("pt-BR", {
+    const offset = -new Date().getTimezoneOffset();
+    const offsetSign = offset >= 0 ? "+" : "-";
+    const offsetHours = String(Math.floor(Math.abs(offset) / 60)).padStart(2, "0");
+    const offsetMins = String(Math.abs(offset) % 60).padStart(2, "0");
+    const timezoneStr = `UTC${offsetSign}${offsetHours}:${offsetMins}`;
+
+    const localTime = new Date().toLocaleString("pt-BR", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
     });
+    const utcTime = new Date().toISOString();
+    const now = `${localTime} (${timezoneStr}) / ${utcTime} (UTC)`;
 
     processedPrompt = processedPrompt
       .replace(/\[today\]/g, now)
@@ -452,6 +463,13 @@ export class GeminiLiveAgent {
       },
       async (name, args) => {
         return this.handleToolCall(name, args);
+      },
+      () => {
+        if (!this.detached) {
+          console.warn("[GeminiAgent] Sessão fechou inesperadamente. Desacoplando e transferindo para operador...");
+          toast.error("IA desconectou inesperadamente. O controle da ligação foi devolvido para você.");
+          this.detach().catch(() => {});
+        }
       }
     );
 
@@ -591,11 +609,16 @@ export class GeminiLiveAgent {
     if (name === "schedule_call") {
       console.log("[GeminiAgent] Tool schedule_call disparada.", args);
       if (!call) return { error: "chamada não encontrada" };
-      const datetime = args.datetime;
+      let datetime = args.datetime;
       const prompt = args.prompt;
 
       if (!datetime) {
         return { error: "data/hora inválida ou vazia" };
+      }
+
+      // Se a string não contiver indicador de fuso (Z, + ou -), adiciona o sufixo 'Z' (UTC) por padrão para evitar dupla conversão
+      if (datetime && !datetime.endsWith("Z") && !datetime.includes("+") && !/-\d{2}:\d{2}$/.test(datetime)) {
+        datetime = `${datetime}Z`;
       }
 
       let scheduledDate = new Date(datetime);
@@ -604,6 +627,24 @@ export class GeminiLiveAgent {
       }
 
       try {
+        let phoneToUse = call.peer;
+        try {
+          const response = await fetch(apiUrl(`/api/sessions/${call.sessionId}/contacts/${encodeURIComponent(call.peer)}`), {
+            headers: {
+              "X-API-Key": getApiKey(),
+              "X-Client-Id": getClientId(),
+            }
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data && data.phone) {
+              phoneToUse = data.phone;
+            }
+          }
+        } catch (e) {
+          console.error("[GeminiAgent] Erro ao buscar telefone do contato:", e);
+        }
+
         const { aiConfig } = await getAIConfig(call.sessionId);
         if (aiConfig) {
           let schedules: ScheduledCall[] = [];
@@ -613,7 +654,7 @@ export class GeminiLiveAgent {
 
           const newCall: ScheduledCall = {
             id: Math.random().toString(36).substring(2, 11),
-            phone: call.peer,
+            phone: phoneToUse,
             time: scheduledDate.toISOString(),
             active: true,
             prompt: prompt || undefined
@@ -683,6 +724,43 @@ export class GeminiLiveAgent {
 
     console.log("[GeminiAgent] Gerando resumo da chamada...");
 
+    // Busca informações do contato (resolução de LID e nome) para incluir no resumo
+    let contactInfoStr = call.peer;
+    try {
+      const response = await fetch(apiUrl(`/api/sessions/${call.sessionId}/contacts/${encodeURIComponent(call.peer)}`), {
+        headers: {
+          "X-API-Key": getApiKey(),
+          "X-Client-Id": getClientId(),
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data) {
+          const name = data.name;
+          const phone = data.phone;
+
+          const formatPhoneNumber = (value: string) => {
+            const cleaned = value.replace(/\D/g, "");
+            if (cleaned.length === 0) return "";
+            if (cleaned.length <= 2) return `+${cleaned}`;
+            if (cleaned.length <= 4) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2)}`;
+            if (cleaned.length <= 8) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4)}`;
+            if (cleaned.length <= 12) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 8)}-${cleaned.slice(8)}`;
+            return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 9)}-${cleaned.slice(9, 13)}`;
+          };
+          const formattedPhone = formatPhoneNumber(phone || call.peer);
+
+          if (name && name !== (phone || call.peer)) {
+            contactInfoStr = `${name} (${formattedPhone})`;
+          } else {
+            contactInfoStr = formattedPhone;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[GeminiAgent] Erro ao buscar contato para o resumo:", e);
+    }
+
     // Chama API REST do Gemini para gerar o resumo
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.config.geminiApiKey}`;
     
@@ -697,7 +775,7 @@ export class GeminiLiveAgent {
     const prompt = `Analise a transcrição abaixo e gere um resumo muito objetivo e formatado para WhatsApp (use *negrito* nos títulos e emojis). Seja extremamente conciso.
 
 📞 *RESUMO DE ATENDIMENTO*
-• *Contato*: ${call.peer}
+• *Contato*: ${contactInfoStr}
 • *Horário*: ${formattedDate}
 • *Sentido*: ${call.direction === "inbound" ? "Recebida" : "Efetuada"}
 
@@ -729,6 +807,58 @@ ${transcriptText}`;
     }
 
     console.log("[GeminiAgent] Resumo gerado com sucesso:", summary);
+
+    // Salva o resumo no histórico do backend de forma assíncrona
+    fetch(apiUrl(`/api/sessions/${call.sessionId}/history/${this.callId}/summary`), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": getApiKey(),
+        "X-Client-Id": getClientId(),
+      },
+      body: JSON.stringify({ summary })
+    }).then(async (res) => {
+      if (res.ok) {
+        console.log("[GeminiAgent] Resumo salvo no histórico do backend.");
+      } else {
+        console.error("[GeminiAgent] Erro ao salvar resumo no histórico do backend:", res.status);
+      }
+    }).catch((e) => {
+      console.error("[GeminiAgent] Erro ao salvar resumo no histórico do backend:", e);
+    });
+
+    // Salva o resumo no agendamento correspondente (se houver um configurado)
+    getAIConfig(call.sessionId).then(async ({ enabled, aiConfig }) => {
+      if (enabled && aiConfig) {
+        let currentSchedules: ScheduledCall[] = [];
+        try {
+          currentSchedules = JSON.parse(aiConfig.scheduledCalls || "[]");
+        } catch {}
+        
+        let found = false;
+        const updated = currentSchedules.map((s) => {
+          if (s.callId === this.callId) {
+            found = true;
+            return { ...s, summary };
+          }
+          return s;
+        });
+
+        if (found) {
+          const nextConfig = {
+            ...aiConfig,
+            scheduledCalls: JSON.stringify(updated),
+          };
+          await setAIConfig(call.sessionId, nextConfig);
+          if (useSessions.getState().activeId === call.sessionId) {
+            useAIAgents.getState().setActiveSessionConfig(nextConfig);
+          }
+          console.log("[GeminiAgent] Resumo salvo no agendamento correspondente.");
+        }
+      }
+    }).catch((e) => {
+      console.error("[GeminiAgent] Erro ao atualizar resumo no agendamento:", e);
+    });
 
     // Ação 1: Enviar resumo para o Admin
     if (this.config.postCall.sendAdmin && this.config.postCall.adminNumber) {

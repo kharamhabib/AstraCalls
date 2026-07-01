@@ -85,13 +85,34 @@ export const SchedulesTab = ({ sid }: { sid: string }) => {
   };
 
   const handleDelete = (id: string) => {
-    void persistSchedules(schedules.filter((s) => s.id !== id));
+    const target = schedules.find((s) => s.id === id);
+    if (target && getStatus(target) === "pending") {
+      // Cancel it (move to Cancelado)
+      const next = schedules.map((s) => (s.id === id ? { ...s, active: false } : s));
+      void persistSchedules(next);
+      toast.success("Agendamento cancelado");
+    } else {
+      // Delete it completely
+      void persistSchedules(schedules.filter((s) => s.id !== id));
+      toast.success("Histórico excluído");
+    }
   };
 
-  const grouped = columns.map((col) => ({
-    ...col,
-    items: schedules.filter((s) => getStatus(s) === col.id),
-  }));
+  const grouped = columns.map((col) => {
+    const items = schedules.filter((s) => getStatus(s) === col.id);
+    // Sort items by time
+    if (col.id === "pending") {
+      // Soonest first
+      items.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+    } else {
+      // Latest first
+      items.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+    }
+    return {
+      ...col,
+      items,
+    };
+  });
 
   if (!config && !busy) {
     return (
@@ -106,7 +127,7 @@ export const SchedulesTab = ({ sid }: { sid: string }) => {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5 animate-fade-in">
+    <div className="mx-auto max-w-6xl space-y-5 animate-fade-in">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -197,7 +218,7 @@ export const SchedulesTab = ({ sid }: { sid: string }) => {
                   </p>
                 ) : (
                   col.items.map((s) => (
-                    <ScheduleCard key={s.id} schedule={s} onDelete={handleDelete} />
+                    <ScheduleCard key={s.id} sid={sid} schedule={s} onDelete={handleDelete} />
                   ))
                 )}
               </div>
