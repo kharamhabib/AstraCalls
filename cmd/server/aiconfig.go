@@ -29,6 +29,7 @@ type PostCallActions struct {
 }
 
 type AIConfig struct {
+	ServerSideAI      bool            `json:"serverSideAI"`
 	GeminiAPIKey      string          `json:"geminiApiKey"`
 	VoiceName         string          `json:"voiceName"`
 	LanguageCode      string          `json:"languageCode"`

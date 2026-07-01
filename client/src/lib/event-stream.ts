@@ -22,7 +22,9 @@ export type BrokerEvent =
   | { type: "call-status"; sessionId: string; id: string; owner: string | null; status: CallStatus; peer: string; startedAt: number }
   | { type: "call-ended"; sessionId: string; id: string; owner: string | null; reason: string; endedAt: number }
   | { type: "incoming"; sessionId: string; id: string; peer: string; offeredAt: number }
-  | { type: "incoming-claimed"; sessionId: string; id: string; owner: string };
+  | { type: "incoming-claimed"; sessionId: string; id: string; owner: string }
+  | { type: "ai-agent-active"; sessionId: string; callId: string; server: boolean }
+  | { type: "ai-transcript"; sessionId: string; callId: string; speaker: string; text: string };
 
 type Listener = (ev: BrokerEvent) => void;
 

@@ -178,6 +178,45 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 	}
 	cm := s.createCall(callID)
 	cm.HandleCallOffer(ctx, node, evt.From)
+
+	// Auto-atendimento server-side: aceita e acopla IA automaticamente
+	config := s.getAIConfig()
+	if config.ServerSideAI && config.AutoAnswer && config.GeminiAPIKey != "" {
+		s.log.Info("[ServerAI] Auto-atendendo chamada recebida", "callId", callID, "peer", evt.From.String())
+
+		// Marca owner como servidor
+		s.mgr.broker.setOwner(callID, serverOwnerID)
+		s.mgr.broker.emitIncomingClaimed(s.id, callID, serverOwnerID)
+
+		// Aceita a chamada
+		go func() {
+			if err := cm.AcceptCall(ctx, callID); err != nil {
+				s.log.Error("[ServerAI] Erro ao aceitar chamada", "err", err, "callId", callID)
+				return
+			}
+
+			// Aguarda a chamada ficar ativa e então acopla o agente
+			ac, ok := s.reg.get(callID)
+			if !ok {
+				return
+			}
+			originalOnState := ac.cm.OnStateChange
+			ac.cm.OnStateChange = func(info *call.CallInfo) {
+				if originalOnState != nil {
+					originalOnState(info)
+				}
+				if info.IsEnded() {
+					return
+				}
+				if info.StateData.State == core.CallStateActive {
+					agent := NewServerAIAgent(s, callID, evt.From.String(), "inbound", ac.cm, config, s.log)
+					if err := agent.Start(ctx); err != nil {
+						s.log.Error("[ServerAI] Erro ao iniciar agente", "err", err, "callId", callID)
+					}
+				}
+			}
+		}()
+	}
 }
 
 func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from types.JID) {

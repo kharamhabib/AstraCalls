@@ -43,6 +43,9 @@ export const useAICallScheduler = () => {
     if (!activeId || !activeConfig) return;
 
     const interval = setInterval(() => {
+      // Se a IA autônoma no servidor está ativada, o Go scheduler cuida dos agendamentos
+      if (activeConfig.serverSideAI) return;
+
       // Evita disparar agendamentos se já houver qualquer chamada ativa ou recebida tocando
       const activeCalls = useCalls.getState().calls;
       const incoming = useCalls.getState().incoming;

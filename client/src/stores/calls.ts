@@ -57,6 +57,16 @@ export const ensureCallsWired = (): void => {
       useCalls.setState({ incoming: { sessionId: ev.sessionId, callId: ev.id, peer: ev.peer, offeredAt: ev.offeredAt } });
     } else if (ev.type === "incoming-claimed") {
       useCalls.setState((s) => (s.incoming?.callId === ev.id ? { incoming: null } : s));
+    } else if (ev.type === "ai-agent-active") {
+      // Servidor está gerenciando esta chamada com IA
+      if (ev.server) {
+        useAIAgents.getState().setAgentActive(ev.callId, true);
+      } else {
+        useAIAgents.getState().setAgentActive(ev.callId, false);
+      }
+    } else if (ev.type === "ai-transcript") {
+      // Transcrição em tempo real do agente server-side
+      useAIAgents.getState().appendTranscription(ev.callId, ev.speaker as "client" | "ai", ev.text);
     }
   });
 };

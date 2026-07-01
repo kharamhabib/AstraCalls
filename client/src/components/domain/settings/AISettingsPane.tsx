@@ -177,6 +177,13 @@ export const AISettingsPane = ({ config, onChange, enabled }: AISettingsPaneProp
           <div className="space-y-3.5">
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
+                <Label className="text-sm font-medium">IA Autônoma no Servidor</Label>
+                <p className="text-xs text-muted-foreground">O servidor gerencia IA e agendamentos sem necessidade do navegador aberto</p>
+              </div>
+              <Switch checked={config.serverSideAI} onChange={(v) => onChange({ ...config, serverSideAI: v })} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
                 <Label className="text-sm font-medium">Atendimento Automático</Label>
                 <p className="text-xs text-muted-foreground">Atender ligações de voz recebidas pela IA</p>
               </div>

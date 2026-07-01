@@ -22,6 +22,7 @@ export type PostCallActions = {
 };
 
 export type AIConfig = {
+  serverSideAI: boolean; // Se true, o servidor gerencia IA de voz e agendamentos autonomamente
   geminiApiKey: string;
   voiceName: string;
   languageCode: string;

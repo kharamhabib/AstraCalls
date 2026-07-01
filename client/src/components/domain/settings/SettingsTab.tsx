@@ -67,6 +67,7 @@ Hoje é [today] e você está falando com o cliente do número [phone]. Esta é 
 * Ferramenta \`human_transfer\` (Falar com Humano): Se o cliente pedir explicitamente para falar com um atendente humano, gerente, ou se ele fizer perguntas complexas demais que você não sabe responder, diga: "Vou te transferir agora mesmo para um de nossos atendentes, só um momento" e execute a ferramenta imediatamente.
 * Ferramenta \`schedule_call\` (Reagendar/Agendar Ligação): Se o cliente disser que não pode falar no momento, pedir para retornar mais tarde, ou solicitar um lembrete (ex: "me ligue e confirme a reunião as 10 da manhã"), pergunte educadamente pela data e hora desejada. Calcule a data/hora exata relativa ao horário atual ([today]) e execute esta ferramenta preenchendo o parâmetro 'datetime' em formato ISO e 'prompt' com o roteiro ou lembrete (ex: "Confirmar reunião"). Confirme para o cliente o agendamento antes de desligar.
 * Ferramenta \`hangup\` (Encerrar Chamada): Quando a conversa estiver resolvida, o cliente se despedir e não houver mais nenhuma pendência, agradeça pelo contato, despeça-se educadamente e chame a ferramenta \`hangup\` para desligar a ligação. Nunca deixe a ligação em silêncio ou pendente após a despedida.`,
+  serverSideAI: false,
   autoAnswer: false,
   temperature: 1.0,
   maxDurationMin: 5,
@@ -101,6 +102,7 @@ export const SettingsTab = ({ sid }: { sid: string }) => {
         setEnabled(r.enabled);
         const c = r.aiConfig || defaultConfig;
         setAiConfig({
+          serverSideAI: !!c.serverSideAI,
           geminiApiKey: c.geminiApiKey || "",
           voiceName: c.voiceName || "Puck",
           languageCode: c.languageCode || "pt-BR",
@@ -155,11 +157,11 @@ export const SettingsTab = ({ sid }: { sid: string }) => {
 
   return (
     <div className="mx-auto max-w-3xl space-y-5 animate-fade-in relative">
-      {busy && !aiConfig && (
-        <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-50">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      )}
+      <div className={`absolute inset-0 flex items-center justify-center bg-background/50 z-50 transition-all duration-200 ${
+        busy && !aiConfig ? "opacity-100 visible" : "opacity-0 invisible pointer-events-none"
+      }`}>
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
 
       <div>
         <h2 className="text-lg font-semibold tracking-tight">Configurações</h2>
@@ -219,8 +221,8 @@ export const SettingsTab = ({ sid }: { sid: string }) => {
               </Button>
             )}
             <Button onClick={handleSave} disabled={busy}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : null}
-              Salvar Configurações
+              {busy && <Loader2 className="h-4 w-4 animate-spin mr-1.5" />}
+              <span>Salvar Configurações</span>
             </Button>
           </div>
         )}

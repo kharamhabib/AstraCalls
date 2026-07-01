@@ -30,6 +30,8 @@ export const useAICallHandler = () => {
     const checkAndAutoAnswer = async () => {
       try {
         const { enabled, aiConfig } = await getAIConfig(incoming.sessionId);
+        // Se a IA autônoma no servidor está ativada, o Go cuida do auto-atendimento
+        if (enabled && aiConfig && aiConfig.serverSideAI) return;
         if (enabled && aiConfig && aiConfig.autoAnswer) {
           toast.info(`Chamada recebida de ${incoming.peer}. Atendendo automaticamente com IA...`);
           acceptCallMutation.mutate({
@@ -70,6 +72,11 @@ export const useAICallHandler = () => {
           startingAgentsRef.current.add(call.callId); // Trava a inicialização para esta chamada
 
           void getAIConfig(call.sessionId).then(async ({ enabled, aiConfig }) => {
+            // Se a IA autônoma no servidor está ativada, o Go já gerencia o agente de voz
+            if (enabled && aiConfig && aiConfig.serverSideAI) {
+              startingAgentsRef.current.delete(call.callId);
+              return;
+            }
             // Acopla a IA se autoAnswer estiver ligado OU se for uma chamada agendada disparada pela IA
             if (enabled && aiConfig && (aiConfig.autoAnswer || isScheduled)) {
               try {

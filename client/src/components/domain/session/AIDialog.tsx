@@ -77,6 +77,7 @@ Hoje é [today] e você está falando com o cliente do número [phone]. Esta é 
 * Ferramenta \`human_transfer\` (Falar com Humano): Se o cliente pedir explicitamente para falar com um atendente humano, gerente, ou se ele fizer perguntas complexas demais que você não sabe responder, diga: "Vou te transferir agora mesmo para um de nossos atendentes, só um momento" e execute a ferramenta imediatamente.
 * Ferramenta \`schedule_call\` (Reagendar/Agendar Ligação): Se o cliente disser que não pode falar no momento, pedir para retornar mais tarde, ou solicitar um lembrete (ex: "me ligue e confirme a reunião as 10 da manhã"), pergunte educadamente pela data e hora desejada. Calcule a data/hora exata relativa ao horário atual ([today]) e execute esta ferramenta preenchendo o parâmetro 'datetime' em formato ISO e 'prompt' com o roteiro ou lembrete (ex: "Confirmar reunião"). Confirme para o cliente o agendamento antes de desligar.
 * Ferramenta \`hangup\` (Encerrar Chamada): Quando a conversa estiver resolvida, o cliente se despedir e não houver mais nenhuma pendência, agradeça pelo contato, despeça-se educadamente e chame a ferramenta \`hangup\` para desligar a ligação. Nunca deixe a ligação em silêncio ou pendente após a despedida.`,
+  serverSideAI: false,
   autoAnswer: false,
   temperature: 1.0,
   maxDurationMin: 5,
@@ -120,6 +121,7 @@ export const AIDialog = ({ sid }: { sid: string }) => {
         setEnabled(r.enabled);
         const c = r.aiConfig || defaultConfig;
         setConfig({
+          serverSideAI: !!c.serverSideAI,
           geminiApiKey: c.geminiApiKey || "",
           voiceName: c.voiceName || "Puck",
           languageCode: c.languageCode || "pt-BR",
@@ -263,11 +265,11 @@ export const AIDialog = ({ sid }: { sid: string }) => {
           </button>
         </div>
 
-        {busy && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-50">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        )}
+        <div className={`absolute inset-0 flex items-center justify-center bg-background/50 z-50 transition-all duration-200 ${
+          busy ? "opacity-100 visible" : "opacity-0 invisible pointer-events-none"
+        }`}>
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
 
         <div className="py-4 space-y-4 max-h-[380px] overflow-y-auto pr-1">
           {tab === "config" ? (
@@ -374,6 +376,17 @@ export const AIDialog = ({ sid }: { sid: string }) => {
 
               {/* Toggles */}
               <div className="border rounded-lg p-3 space-y-3.5 bg-muted/20">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-medium">IA Autônoma no Servidor</Label>
+                    <p className="text-xs text-muted-foreground">O servidor gerencia IA e agendamentos sem navegador aberto</p>
+                  </div>
+                  <Switch
+                    checked={config.serverSideAI}
+                    onChange={(v) => setConfig({ ...config, serverSideAI: v })}
+                  />
+                </div>
+
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <Label className="text-sm font-medium">Atendimento Automático</Label>

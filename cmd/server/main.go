@@ -68,6 +68,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Inicia o scheduler de IA server-side em background
+	go srv.scheduler.Run(ctx)
+
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.routes()}
 	go func() {
 		log.Info("HTTP server listening", "addr", *addr)

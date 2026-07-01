@@ -10,6 +10,7 @@ import (
 type server struct {
 	broker    *Broker
 	sessions  *SessionManager
+	scheduler *AIScheduler
 	log       *slog.Logger
 	staticDir string
 }
@@ -39,6 +40,7 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	broker := NewBroker()
 	mgr := newSessionManager(ctx, provider, broker, store, waLogger, log, maxCalls)
 	broker.SnapshotFn = mgr.snapshotEvents
+	scheduler := NewAIScheduler(mgr, log)
 
-	return &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir}, nil
+	return &server{broker: broker, sessions: mgr, scheduler: scheduler, log: log, staticDir: staticDir}, nil
 }
