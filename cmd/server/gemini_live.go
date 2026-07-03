@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -48,6 +50,7 @@ func NewGeminiLiveClient(config AIConfig, log *slog.Logger) *GeminiLiveClient {
 }
 
 // Connect abre o WebSocket e envia a mensagem de setup. Bloqueia até setupComplete.
+// Connect abre o WebSocket e envia a mensagem de setup. Bloqueia até setupComplete.
 func (g *GeminiLiveClient) Connect(
 	onAudio func(pcm16 []float32),
 	onText func(speaker, text string),
@@ -59,13 +62,21 @@ func (g *GeminiLiveClient) Connect(
 	g.onToolCall = onToolCall
 	g.onClose = onClose
 
+	return g.connectAndSetup()
+}
+
+// connectAndSetup abre a conexão websocket e faz o setup inicial.
+func (g *GeminiLiveClient) connectAndSetup() error {
 	url := fmt.Sprintf("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=%s", g.config.GeminiAPIKey)
 
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		return fmt.Errorf("gemini live dial: %w", err)
 	}
+
+	g.mu.Lock()
 	g.conn = conn
+	g.mu.Unlock()
 	g.log.Info("[GeminiLive] Conexão WebSocket aberta")
 
 	// Monta e envia a mensagem de setup
@@ -94,8 +105,8 @@ func (g *GeminiLiveClient) Connect(
 				g.mu.Unlock()
 				g.log.Info("[GeminiLive] setupComplete recebido — sessão ativa")
 				setupDone <- nil
-				// Inicia a goroutine de leitura contínua
-				go g.readLoop()
+				// Inicia a goroutine de leitura contínua passando a conexão ativa
+				go g.readLoop(conn)
 				return
 			}
 		}
@@ -317,19 +328,26 @@ func (g *GeminiLiveClient) Close() {
 }
 
 // readLoop é a goroutine que lê mensagens do Gemini continuamente.
-func (g *GeminiLiveClient) readLoop() {
+func (g *GeminiLiveClient) readLoop(conn *websocket.Conn) {
 	defer func() {
 		g.mu.Lock()
+		isCurrent := (g.conn == conn)
 		wasClosed := g.closed
-		g.closed = true
+		if isCurrent {
+			g.ready = false
+		}
 		g.mu.Unlock()
-		if !wasClosed && g.onClose != nil {
+
+		if !wasClosed && isCurrent {
+			// Conexão caiu inesperadamente, tentar reconexão
+			go g.reconnect()
+		} else if wasClosed && isCurrent && g.onClose != nil {
 			g.onClose()
 		}
 	}()
 
 	for {
-		_, raw, err := g.conn.ReadMessage()
+		_, raw, err := conn.ReadMessage()
 		if err != nil {
 			g.log.Debug("[GeminiLive] readLoop encerrado", "err", err)
 			return
@@ -340,6 +358,77 @@ func (g *GeminiLiveClient) readLoop() {
 		}
 		g.handleMessage(msg)
 	}
+}
+
+// reconnect tenta restabelecer a conexão com backoff exponencial.
+func (g *GeminiLiveClient) reconnect() {
+	g.mu.Lock()
+	if g.closed || g.ready {
+		g.mu.Unlock()
+		return
+	}
+	g.mu.Unlock()
+
+	g.log.Warn("[GeminiLive] Conexão perdida. Tentando reconectar...")
+
+	backoffs := []time.Duration{500 * time.Millisecond, 1500 * time.Millisecond, 3000 * time.Millisecond}
+	for i, delay := range backoffs {
+		g.mu.Lock()
+		if g.closed {
+			g.mu.Unlock()
+			return
+		}
+		g.mu.Unlock()
+
+		g.log.Info(fmt.Sprintf("[GeminiLive] Tentativa de reconexão %d/3 em %v...", i+1, delay))
+		time.Sleep(delay)
+
+		g.mu.Lock()
+		if g.closed {
+			g.mu.Unlock()
+			return
+		}
+		g.mu.Unlock()
+
+		err := g.connectAndSetup()
+		if err == nil {
+			g.log.Info("[GeminiLive] Reconectado com sucesso!")
+			g.sendTranscriptContext()
+			return
+		}
+		g.log.Error("[GeminiLive] Falha na tentativa de reconexão", "err", err)
+	}
+
+	g.log.Error("[GeminiLive] Máximo de tentativas de reconexão atingido. Encerrando sessão.")
+	g.Close()
+	if g.onClose != nil {
+		g.onClose()
+	}
+}
+
+// sendTranscriptContext envia o histórico da conversa como contexto pós-reconexão.
+func (g *GeminiLiveClient) sendTranscriptContext() {
+	g.mu.Lock()
+	lines := make([]TranscriptLine, len(g.transcript))
+	copy(lines, g.transcript)
+	g.mu.Unlock()
+
+	if len(lines) == 0 {
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Você foi reconectado após uma queda de sinal. Para sua referência, aqui está a transcrição da conversa até agora. Continue a partir deste ponto sem repetir o que já foi dito:\n\n")
+	for _, line := range lines {
+		speakerName := "Cliente"
+		if line.Speaker == "ai" {
+			speakerName = "Você (IA)"
+		}
+		sb.WriteString(fmt.Sprintf("- %s: %s\n", speakerName, line.Text))
+	}
+	sb.WriteString("\nPor favor, continue a conversa normalmente respondendo de forma natural.")
+
+	g.SendText(sb.String())
 }
 
 // handleMessage processa uma mensagem recebida do Gemini.

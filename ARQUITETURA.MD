@@ -149,11 +149,20 @@ Ao final de uma chamada gerenciada pelo servidor:
 1. O agente autônomo recupera o log completo da transcrição gerada durante a chamada.
 2. Faz uma chamada via REST API do Gemini para gerar um resumo executivo muito objetivo e profissional.
 3. Envia o resumo formatado para o WhatsApp do administrador e do cliente (se configurado).
-4. Dispara webhooks HTTP externos com o payload contendo o ID da chamada, resumo, transcrição completa e metadados de duração.
+4. Dispara webhooks HTTP externos enriquecidos com metadados detalhados contendo o ID da chamada, resumo, transcrição completa turn-by-turn, horários de início/fim e duração calculada.
 
 ### 5.4 Abertura de Chamados (open_ticket) e Prompts Modulares
-* **Ferramenta `open_ticket`**: Substitui a antiga transferência síncrona para humano (`human_transfer`). Quando ativada pela IA, ela atualiza o registro da chamada no broker como `ticketOpened = true` e salva a razão do contato (`reason`). O backend notifica o administrador via WhatsApp (se configurado) e agenda o desligamento automático da chamada após 3 segundos (suficiente para a despedida).
+* **Ferramenta `open_ticket`**: Substitui a antiga transferência síncrona para humano (`human_transfer`). Quando ativada pela IA, ela atualiza o registro da chamada no broker como `ticketOpened = true` e salva a razão do contato (`reason`). O backend notifica o administrador via WhatsApp (se configurado). A chamada **não** é encerrada de forma automática pelo manipulador da ferramenta, permitindo que a IA continue interagindo livremente e use a ferramenta `hangup` para desligar apenas quando a conversa for concluída.
 * **Prompts Modulares e Dinâmicos**: As instruções e regras de execução de cada ferramenta pré-definida (`hangup`, `open_ticket`, `send_message`, `schedule_call`) são configuradas separadamente (editáveis sob cada switch no painel) e salvas no campo `toolPrompts` da configuração. O backend Go (`ai_agent.go`) e o cliente React (`gemini-live.ts`) concatenam de forma automatizada estes prompts específicos ao prompt geral `systemInstruction` antes de iniciar a sessão Gemini Live.
+
+### 5.5 Reconexão do Gemini Live e Contexto de Conversa
+* O cliente WebSocket em [gemini_live.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/cmd/server/gemini_live.go) implementa retry automático de até 3 tentativas com backoff exponencial (500ms, 1.5s, 3s).
+* Durante a queda da conexão WebSocket com o Google, o pipeline de áudio transmite pacotes de silêncio para manter a ligação ativa.
+* Ao reconectar com sucesso, a IA recebe a transcrição acumulada da conversa para recuperar o contexto do diálogo e prosseguir sem repetir perguntas.
+
+### 5.6 Persistência de Transcrições
+* Ao término de cada chamada de voz IA, a transcrição completa acumulada é gravada no banco de dados na tabela `call_transcripts` via transação SQL otimizada.
+* O histórico é exposto via API `GET /api/sessions/{sid}/history/{callId}/transcript` e exibido de forma interativa e expandida com balões de conversa no frontend ([HistoryDrawer.tsx](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/client/src/components/domain/history/HistoryDrawer.tsx)).
 
 ---
 
@@ -166,6 +175,12 @@ Para suportar chamadas simultâneas estáveis diretamente no servidor e evitar t
 * **Prevenção de Disparos Concorrentes de Agendamento**: O `AIScheduler` mantém um controle em memória dos IDs de agendamento em trânsito (`triggeringIds`). Isso garante que um agendamento nunca seja disparado duas vezes caso haja lentidão na gravação das configurações no banco de dados. Os agentes e locks são limpos em memória via `CleanupAgent` ao detectar o encerramento da chamada.
 * **Isolamento de Sinalização (Filtro de Loopback)**: Eventos do tipo `CallAccept` vindos do WhatsApp são processados apenas se a chamada correspondente em registro for do tipo `Outgoing` (iniciada pelo servidor). Isso impede que o receptor de uma chamada processe o seu próprio recibo de aceitação em loopback como se fosse um aceite do peer remoto, garantindo integridade de estado.
 * **Atraso de Auto-Atendimento e Intercepção Humana**: Tanto no cliente quanto no servidor, a IA aguarda o tempo definido pelo slider `autoAnswerDelay` (0 a 60s) antes de aceitar chamadas de entrada. Durante esse intervalo, o operador humano pode atender à chamada no navegador ou no celular. Caso a chamada mude de estado ou seja assumida por um humano, a rotina de auto-atendimento da IA é cancelada imediatamente.
-* **Segurança de API Key**: A chave de API do Gemini inserida pelo painel é salva no banco de dados criptografada ou de forma segura vinculada à sessão do WhatsApp. O painel web recupera essa chave para conectar-se diretamente com o endpoint do Google (se client-side), ou o servidor Go a lê no boot da chamada para autenticar o WebSocket (se server-side).
+* **Segurança e Mascaramento de API Key**: O campo `GeminiAPIKey` é mascarado como `gem•••••xyz` no endpoint de consulta GET do backend, e o endpoint POST de atualização de configuração ignora valores contendo caracteres de máscara (`•`), impedindo a exposição ou sobrescrita acidental da chave real em banco.
+* **Prevenção de Vazamento de Memória (MemHistoryLimit)**: O histórico de chamadas em memória do broker é limitado a 500 registros, descartando os itens mais antigos e evitando o crescimento indefinido de uso de RAM no processo Go.
+* **Limitação Máxima nas Filas de Áudio**: Os buffers circulares de recebimento e envio de PCM em tempo real são limitados a `800000` samples (~50 segundos de áudio a 16kHz) para comportar rajadas iniciais de áudio enviadas pela API do Gemini Live sem que ocorram truncamentos, mantendo a estabilidade sonora e o consumo de memória sob controle.
+* **Rate Limiting no HTTP API**: Implementação de middleware global (10 req/s, burst 30) e rotas críticas (criação de sessão limitada a 1 req/min por IP, início de chamada a 5 req/min por IP) utilizando o algoritmo token bucket e inserindo cabeçalhos padrão `X-RateLimit-*`.
+* **Otimização de Polling do Scheduler**: O loop background do `AIScheduler` retorna instantaneamente sem realizar consultas SQL ou parsing de JSON desnecessários caso a contagem de agendamentos cadastrados ativos no servidor seja igual a zero.
+* **Desconexão Graceful de Banco de Dados**: Fechamento explícito (`Close()`) das conexões do banco de dados administrativo, principal do whatsmeow e sessões ao encerrar o processo Go.
+* **Detecção de Desconexões SSE Mortas**: Goroutines de transmissão SSE monitoram o encerramento de conexão do navegador e encerram a escuta do canal imediatamente ao detectar erro de escrita (ping falho).
 * **Independência de Processo**: O rebranding visual de visualização para **RockCall** foi feito estritamente no frontend (React, HTML). Os pacotes Go, caminhos de importação internos e binários de compilação mantiveram os nomes originais (`wacalls`) para não quebrar referências do sistema de build nativo e das dependências CGO Opus.
-* **Persistência de Transcrições**: As falas do usuário e da IA são agrupadas na store do Zustand (`transcripts`) por tempo e por orador (se client-side), ou transmitidas via SSE e salvas temporariamente na memória do agente para geração do resumo (se server-side).
+* **Persistência de Transcrições**: As falas do usuário e da IA são agrupadas na store do Zustand (`transcripts`) por tempo e por orador (se client-side), ou gravadas no banco de dados Postgres via transação SQL ao fim da chamada (se server-side).

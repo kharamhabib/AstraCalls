@@ -16,6 +16,8 @@ const (
 	StatusEnded     CallStatus = "ended"
 )
 
+const maxHistorySize = 500
+
 type CallRecord struct {
 	SessionID    string     `json:"sessionId"`
 	CallID       string     `json:"callId"`
@@ -176,6 +178,9 @@ func (b *Broker) endCall(id, reason string) {
 	ended := *c
 	delete(b.calls, id)
 	b.history = append(b.history, ended)
+	if len(b.history) > maxHistorySize {
+		b.history = b.history[len(b.history)-maxHistorySize:]
+	}
 	owner := c.Owner
 	sessionID := c.SessionID
 	b.mu.Unlock()
@@ -232,6 +237,17 @@ func (b *Broker) saveSummary(sessionID, callID, summary string) {
 	}
 }
 
+func (b *Broker) findHistoryCall(id string) (CallRecord, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i := len(b.history) - 1; i >= 0; i-- {
+		if b.history[i].CallID == id {
+			return b.history[i], true
+		}
+	}
+	return CallRecord{}, false
+}
+
 func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -266,7 +282,9 @@ func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID strin
 			}
 			flusher.Flush()
 		case <-keepalive.C:
-			w.Write([]byte(": ping\n\n"))
+			if _, err := w.Write([]byte(": ping\n\n")); err != nil {
+				return
+			}
 			flusher.Flush()
 		}
 	}

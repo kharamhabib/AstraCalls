@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"wacalls/internal/voip/call"
@@ -23,6 +24,7 @@ type AIScheduler struct {
 	agents        map[string]*ServerAIAgent
 	triggeringIds map[string]bool
 	callToSched   map[string]string
+	activeCount   int64
 }
 
 // NewAIScheduler cria um novo scheduler.
@@ -83,6 +85,9 @@ func (s *AIScheduler) Stop() {
 
 // tick verifica todas as sessões por agendamentos prontos para disparar.
 func (s *AIScheduler) tick(ctx context.Context) {
+	if atomic.LoadInt64(&s.activeCount) == 0 {
+		return
+	}
 	s.mgr.mu.RLock()
 	sessions := make([]*Session, 0, len(s.mgr.sessions))
 	for _, sess := range s.mgr.sessions {
@@ -161,6 +166,7 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 
 	// Marca o agendamento como inativo antes de disparar
 	schedules[toTriggerIdx]["active"] = false
+	atomic.AddInt64(&s.activeCount, -1)
 	b, _ := json.Marshal(schedules)
 	config.ScheduledCalls = string(b)
 	sess.setAIConfig(config)
@@ -232,7 +238,7 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 			// Chamada conectada — acopla o agente de voz
 			go func() {
 				agent := NewServerAIAgent(sess, callID, phone, "outbound", ac.cm, agentConfig, s.log)
-				if err := agent.Start(context.Background()); err != nil {
+				if err := agent.Start(ctx); err != nil {
 					s.log.Error("[AIScheduler] Erro ao iniciar agente", "err", err, "callId", callID)
 					return
 				}
@@ -258,3 +264,43 @@ func (s *AIScheduler) CleanupAgent(callID string) {
 		delete(s.callToSched, callID)
 	}
 }
+
+// RecalculateActiveCount recalcula o contador de agendamentos ativos percorrendo as sessões.
+func (s *AIScheduler) RecalculateActiveCount() {
+	s.mgr.mu.RLock()
+	sessions := make([]*Session, 0, len(s.mgr.sessions))
+	for _, sess := range s.mgr.sessions {
+		sessions = append(sessions, sess)
+	}
+	s.mgr.mu.RUnlock()
+
+	var total int64
+	for _, sess := range sessions {
+		config := sess.getAIConfig()
+		if !config.ServerSideAI || config.GeminiAPIKey == "" {
+			continue
+		}
+		var schedules []map[string]any
+		if config.ScheduledCalls == "" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(config.ScheduledCalls), &schedules); err != nil {
+			continue
+		}
+		for _, sched := range schedules {
+			if active, _ := sched["active"].(bool); active {
+				total++
+			}
+		}
+	}
+	atomic.StoreInt64(&s.activeCount, total)
+	s.log.Info("[AIScheduler] Recalculada quantidade de agendamentos ativos", "count", total)
+}
+
+// RegisterAgent registra um agente ativo no scheduler para que ele possa ser limpo/desacoplado ao encerrar a chamada.
+func (s *AIScheduler) RegisterAgent(callID string, agent *ServerAIAgent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.agents[callID] = agent
+}
+

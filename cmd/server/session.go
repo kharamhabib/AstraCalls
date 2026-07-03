@@ -241,8 +241,10 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 				if info.StateData.State == core.CallStateActive {
 					go func() {
 						agent := NewServerAIAgent(s, callID, evt.From.String(), "inbound", ac.cm, config, s.log)
-						if err := agent.Start(context.Background()); err != nil {
+						if err := agent.Start(s.mgr.appCtx); err != nil {
 							s.log.Error("[ServerAI] Erro ao iniciar agente", "err", err, "callId", callID)
+						} else if s.mgr.Scheduler != nil {
+							s.mgr.Scheduler.RegisterAgent(callID, agent)
 						}
 					}()
 				}

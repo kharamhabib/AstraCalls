@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 type server struct {
+	db        *dbProvider
+	mainDB    *sql.DB
 	broker    *Broker
 	sessions  *SessionManager
 	scheduler *AIScheduler
@@ -30,10 +33,13 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 
 	mainDB, err := provider.openMainDB(ctx)
 	if err != nil {
+		provider.close()
 		return nil, err
 	}
 	store, err := newSessionStore(ctx, mainDB)
 	if err != nil {
+		mainDB.Close()
+		provider.close()
 		return nil, err
 	}
 
@@ -43,5 +49,22 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	scheduler := NewAIScheduler(mgr, log)
 	mgr.Scheduler = scheduler
 
-	return &server{broker: broker, sessions: mgr, scheduler: scheduler, log: log, staticDir: staticDir}, nil
+	return &server{
+		db:        provider,
+		mainDB:    mainDB,
+		broker:    broker,
+		sessions:  mgr,
+		scheduler: scheduler,
+		log:       log,
+		staticDir: staticDir,
+	}, nil
+}
+
+func (s *server) Close() {
+	if s.mainDB != nil {
+		_ = s.mainDB.Close()
+	}
+	if s.db != nil {
+		s.db.close()
+	}
 }

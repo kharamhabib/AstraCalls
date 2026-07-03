@@ -22,6 +22,7 @@ import (
 )
 
 const serverOwnerID = "__server__"
+const maxAudioQueueSamples = 800000 // ~50 segundos a 16kHz
 
 // ServerAIAgent orquestra a ponte de áudio entre o WhatsApp e o Gemini Live no servidor.
 type ServerAIAgent struct {
@@ -136,6 +137,10 @@ func (a *ServerAIAgent) Start(ctx context.Context) error {
 			}
 			a.queueMu.Lock()
 			a.audioQueue = append(a.audioQueue, pcm16k...)
+			if len(a.audioQueue) > maxAudioQueueSamples {
+				a.audioQueue = a.audioQueue[len(a.audioQueue)-maxAudioQueueSamples:]
+				a.log.Warn("[ServerAIAgent] Audio queue truncada (excedeu cap)")
+			}
 			a.queueMu.Unlock()
 		},
 		// onText: transcrições (log + emitir via SSE se frontend estiver aberto)
@@ -190,6 +195,10 @@ func (a *ServerAIAgent) Start(ctx context.Context) error {
 		// Apenas enfileira para processamento ritmado
 		a.inboundMu.Lock()
 		a.inboundQueue = append(a.inboundQueue, pcm16...)
+		if len(a.inboundQueue) > maxAudioQueueSamples {
+			a.inboundQueue = a.inboundQueue[len(a.inboundQueue)-maxAudioQueueSamples:]
+			a.log.Warn("[ServerAIAgent] Inbound queue truncada (excedeu cap)")
+		}
 		a.inboundMu.Unlock()
 	}
 
@@ -373,14 +382,6 @@ func (a *ServerAIAgent) handleToolCall(ctx context.Context, name string, args ma
 			}()
 		}
 
-		// Aguarda brevemente para a IA terminar de falar e desligar
-		go func() {
-			time.Sleep(3 * time.Second)
-			a.Detach()
-			a.sess.terminateCall(a.callID, core.EndCallReasonUserEnded)
-			a.sess.removeCall(a.callID)
-			a.sess.mgr.broker.endCall(a.callID, string(core.EndCallReasonUserEnded))
-		}()
 		return map[string]any{"status": "chamado aberto com sucesso"}
 
 	case "send_message":
@@ -473,6 +474,10 @@ func (a *ServerAIAgent) toolScheduleCall(ctx context.Context, args map[string]an
 	cfgJSON, _ := json.Marshal(config)
 	_ = a.sess.mgr.store.setAIConfig(ctx, a.sess.id, string(cfgJSON))
 
+	if a.sess.mgr.Scheduler != nil {
+		a.sess.mgr.Scheduler.RecalculateActiveCount()
+	}
+
 	a.log.Info("[ServerAIAgent] Ligação agendada", "time", scheduledDate.Format(time.RFC3339))
 	return map[string]any{"status": "ligação agendada com sucesso", "time": scheduledDate.Format(time.RFC3339)}
 }
@@ -515,8 +520,20 @@ func (a *ServerAIAgent) toolCustomWebhook(ctx context.Context, name string, args
 func (a *ServerAIAgent) executePostCallActions() {
 	transcript := a.gemini.Transcript()
 	if len(transcript) == 0 {
-		a.log.Info("[ServerAIAgent] Sem transcrição para gerar resumo")
+		a.log.Info("[ServerAIAgent] Sem transcrição para processar pós-chamada")
 		return
+	}
+
+	// Salva a transcrição no banco de dados principal
+	if a.sess.mgr != nil && a.sess.mgr.store != nil {
+		go func() {
+			err := a.sess.mgr.store.saveTranscript(context.Background(), a.sess.id, a.callID, transcript)
+			if err != nil {
+				a.log.Error("[ServerAIAgent] Erro ao salvar transcrição no banco", "err", err)
+			} else {
+				a.log.Info("[ServerAIAgent] Transcrição salva no banco com sucesso")
+			}
+		}()
 	}
 
 	config := a.gemini.config
@@ -659,12 +676,35 @@ Transcrição:
 
 	// Webhook pós-chamada
 	if config.PostCall.WebhookEnabled && config.PostCall.WebhookURL != "" {
+		var duration int64
+		var ticketOpened bool
+		var ticketReason string
+		var startedAtVal, endedAtVal int64
+
+		if hCall, ok := a.sess.mgr.broker.findHistoryCall(a.callID); ok {
+			startedAtVal = hCall.StartedAt
+			if hCall.EndedAt != nil {
+				endedAtVal = *hCall.EndedAt
+				duration = (endedAtVal - startedAtVal) / 1000
+			}
+			ticketOpened = hCall.TicketOpened
+			ticketReason = hCall.TicketReason
+		}
+
+		transcript := a.gemini.Transcript()
+
 		webhookBody, _ := json.Marshal(map[string]any{
-			"sessionId": a.sess.id,
-			"callId":    a.callID,
-			"peer":      a.peer,
-			"direction": a.direction,
-			"summary":   summary,
+			"sessionId":    a.sess.id,
+			"callId":       a.callID,
+			"peer":         a.peer,
+			"direction":    a.direction,
+			"summary":      summary,
+			"duration":     duration,
+			"ticketOpened": ticketOpened,
+			"ticketReason": ticketReason,
+			"startedAt":    startedAtVal,
+			"endedAt":      endedAtVal,
+			"transcript":   transcript,
 		})
 		go func() {
 			c := &http.Client{Timeout: 10 * time.Second}

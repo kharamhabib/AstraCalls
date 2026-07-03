@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"wacalls/internal/voip/call"
@@ -16,6 +18,7 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -38,6 +41,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
 	mux.HandleFunc("POST /api/sessions/{sid}/history/{callId}/summary", s.handleSaveCallSummary)
 	mux.HandleFunc("POST /api/sessions/{sid}/history/{callId}/ticket", s.handleOpenTicket)
+	mux.HandleFunc("GET /api/sessions/{sid}/history/{callId}/transcript", s.handleGetCallTranscript)
 
 	// Mensageria (whatsmeow)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/text", s.handleSendText)
@@ -77,6 +81,14 @@ func (s *server) routes() http.Handler {
 	if key := os.Getenv("WACALLS_API_KEY"); key != "" {
 		handler = withAuth(handler, key)
 	}
+
+	limiters := &apiLimiters{
+		global:   NewRateLimiter(rate.Limit(10), 30),
+		sessions: NewRateLimiter(rate.Every(time.Minute), 1),
+		calls:    NewRateLimiter(rate.Every(12*time.Second), 5),
+	}
+	handler = s.withRateLimit(handler, limiters)
+
 	return withCORS(handler)
 }
 
@@ -378,6 +390,26 @@ func (s *server) handleOpenTicket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ticket saved"})
 }
 
+func (s *server) handleGetCallTranscript(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	callID := r.PathValue("callId")
+
+	lines, err := s.sessions.store.getTranscript(r.Context(), sess.id, callID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if lines == nil {
+		lines = []TranscriptLine{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"transcript": lines})
+}
+
 func resolveContactPhoneRaw(ctx context.Context, sess *Session, peer string) string {
 	jid, err := types.ParseJID(peer)
 	if err != nil {
@@ -666,4 +698,115 @@ func normalizePhone(p string) string {
 		}
 	}
 	return b.String()
+}
+
+// clientLimiter representa um limiter de IP
+type clientLimiter struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+type RateLimiter struct {
+	mu      sync.Mutex
+	clients map[string]*clientLimiter
+	r       rate.Limit
+	b       int
+}
+
+func NewRateLimiter(r rate.Limit, b int) *RateLimiter {
+	rl := &RateLimiter{
+		clients: make(map[string]*clientLimiter),
+		r:       r,
+		b:       b,
+	}
+	go rl.cleanupLoop()
+	return rl
+}
+
+func (rl *RateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(10 * time.Minute)
+	for range ticker.C {
+		rl.mu.Lock()
+		for ip, cl := range rl.clients {
+			if time.Since(cl.lastSeen) > 30*time.Minute {
+				delete(rl.clients, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+func (rl *RateLimiter) getLimiter(ip string) *rate.Limiter {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	cl, exists := rl.clients[ip]
+	if !exists {
+		cl = &clientLimiter{
+			limiter: rate.NewLimiter(rl.r, rl.b),
+		}
+		rl.clients[ip] = cl
+	}
+	cl.lastSeen = time.Now()
+	return cl.limiter
+}
+
+func getClientIP(r *http.Request) string {
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff != "" {
+		parts := strings.Split(xff, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
+}
+
+type apiLimiters struct {
+	global   *RateLimiter
+	sessions *RateLimiter
+	calls    *RateLimiter
+}
+
+func (s *server) withRateLimit(next http.Handler, limiters *apiLimiters) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := getClientIP(r)
+
+		var rl *RateLimiter
+		var limit int
+		var resetSecs int
+
+		p := r.URL.Path
+		if r.Method == "POST" && p == "/api/sessions" {
+			rl = limiters.sessions
+			limit = 1
+			resetSecs = 60
+		} else if r.Method == "POST" && strings.HasPrefix(p, "/api/sessions/") && strings.HasSuffix(p, "/calls") {
+			rl = limiters.calls
+			limit = 5
+			resetSecs = 60
+		} else {
+			rl = limiters.global
+			limit = 30
+			resetSecs = 1
+		}
+
+		lim := rl.getLimiter(ip)
+		if !lim.Allow() {
+			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", resetSecs))
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			return
+		}
+
+		tokens := lim.Tokens()
+		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", int(tokens)))
+		w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", resetSecs))
+
+		next.ServeHTTP(w, r)
+	})
 }

@@ -62,11 +62,15 @@ func main() {
 		os.Exit(1)
 	}
 	defer srv.sessions.disconnectAll()
+	defer srv.Close()
 
 	if err := srv.sessions.Restore(ctx); err != nil {
 		log.Error("session restore failed", "err", err)
 		os.Exit(1)
 	}
+
+	// Recalcula o total de agendamentos ativos ao iniciar
+	srv.scheduler.RecalculateActiveCount()
 
 	// Inicia o scheduler de IA server-side em background
 	go srv.scheduler.Run(ctx)
