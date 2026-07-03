@@ -391,17 +391,19 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 				}
 				if info.StateData.State == core.CallStateActive {
 					// Chamada conectada — acopla o agente de voz server-side
-					agent := NewServerAIAgent(sess, callID, body.Phone, "outbound", ac.cm, agentConfig, s.log)
-					if err := agent.Start(context.Background()); err != nil {
-						s.log.Error("[ServerAI] Erro ao iniciar agente manual", "err", err, "callId", callID)
-						return
-					}
-					if sess.mgr.Scheduler != nil {
-						sess.mgr.Scheduler.mu.Lock()
-						sess.mgr.Scheduler.agents[callID] = agent
-						sess.mgr.Scheduler.mu.Unlock()
-					}
-					s.log.Info("[ServerAI] Agente IA acoplado à chamada manual", "callId", callID)
+					go func() {
+						agent := NewServerAIAgent(sess, callID, body.Phone, "outbound", ac.cm, agentConfig, s.log)
+						if err := agent.Start(context.Background()); err != nil {
+							s.log.Error("[ServerAI] Erro ao iniciar agente manual", "err", err, "callId", callID)
+							return
+						}
+						if sess.mgr.Scheduler != nil {
+							sess.mgr.Scheduler.mu.Lock()
+							sess.mgr.Scheduler.agents[callID] = agent
+							sess.mgr.Scheduler.mu.Unlock()
+						}
+						s.log.Info("[ServerAI] Agente IA acoplado à chamada manual", "callId", callID)
+					}()
 				}
 			}
 		}
@@ -496,17 +498,19 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 			}
 			if info.StateData.State == core.CallStateActive {
 				// Chamada conectada — acopla o agente de voz server-side
-				agent := NewServerAIAgent(sess, id, ac.cm.CurrentCall().PeerJid, "inbound", ac.cm, config, s.log)
-				if err := agent.Start(context.Background()); err != nil {
-					s.log.Error("[ServerAI] Erro ao iniciar agente manual inbound", "err", err, "callId", id)
-					return
-				}
-				if sess.mgr.Scheduler != nil {
-					sess.mgr.Scheduler.mu.Lock()
-					sess.mgr.Scheduler.agents[id] = agent
-					sess.mgr.Scheduler.mu.Unlock()
-				}
-				s.log.Info("[ServerAI] Agente IA acoplado à chamada recebida manual", "callId", id)
+				go func() {
+					agent := NewServerAIAgent(sess, id, ac.cm.CurrentCall().PeerJid, "inbound", ac.cm, config, s.log)
+					if err := agent.Start(context.Background()); err != nil {
+						s.log.Error("[ServerAI] Erro ao iniciar agente manual inbound", "err", err, "callId", id)
+						return
+					}
+					if sess.mgr.Scheduler != nil {
+						sess.mgr.Scheduler.mu.Lock()
+						sess.mgr.Scheduler.agents[id] = agent
+						sess.mgr.Scheduler.mu.Unlock()
+					}
+					s.log.Info("[ServerAI] Agente IA acoplado à chamada recebida manual", "callId", id)
+				}()
 			}
 		}
 	}

@@ -230,15 +230,17 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 		}
 		if info.StateData.State == core.CallStateActive {
 			// Chamada conectada — acopla o agente de voz
-			agent := NewServerAIAgent(sess, callID, phone, "outbound", ac.cm, agentConfig, s.log)
-			if err := agent.Start(ctx); err != nil {
-				s.log.Error("[AIScheduler] Erro ao iniciar agente", "err", err, "callId", callID)
-				return
-			}
-			s.mu.Lock()
-			s.agents[callID] = agent
-			s.mu.Unlock()
-			s.log.Info("[AIScheduler] Agente IA acoplado à chamada agendada", "callId", callID)
+			go func() {
+				agent := NewServerAIAgent(sess, callID, phone, "outbound", ac.cm, agentConfig, s.log)
+				if err := agent.Start(context.Background()); err != nil {
+					s.log.Error("[AIScheduler] Erro ao iniciar agente", "err", err, "callId", callID)
+					return
+				}
+				s.mu.Lock()
+				s.agents[callID] = agent
+				s.mu.Unlock()
+				s.log.Info("[AIScheduler] Agente IA acoplado à chamada agendada", "callId", callID)
+			}()
 		}
 	}
 }
