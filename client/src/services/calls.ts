@@ -2,15 +2,18 @@ import { apiGet, apiPost, apiDelete } from "@/lib/api";
 import { getClientId } from "@/lib/client-id";
 import { apiUrl, getApiKey } from "@/lib/auth";
 
-export const startCall = (sid: string, phone: string, record: boolean) =>
+export const startCall = (sid: string, phone: string, record: boolean, ai?: boolean, prompt?: string, greeting?: string) =>
   apiPost<{ call: { callId: string } }>(`/api/sessions/${sid}/calls`, {
     phone,
     duration_ms: 300_000,
     record,
+    ai,
+    prompt,
+    greeting,
   });
 
-export const acceptCall = (sid: string, callId: string) =>
-  apiPost<{ call: { callId: string } }>(`/api/sessions/${sid}/calls/${callId}/accept`, {});
+export const acceptCall = (sid: string, callId: string, ai?: boolean) =>
+  apiPost<{ call: { callId: string } }>(`/api/sessions/${sid}/calls/${callId}/accept`, { ai });
 
 export const rejectCall = async (sid: string, callId: string): Promise<void> => {
   const r = await fetch(apiUrl(`/api/sessions/${sid}/calls/${callId}/reject`), {

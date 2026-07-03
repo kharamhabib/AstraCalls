@@ -28,6 +28,7 @@ export type AIConfig = {
   languageCode: string;
   systemInstruction: string;
   autoAnswer: boolean;
+  autoAnswerDelay: number;
   temperature: number;
   maxDurationMin: number;
   silenceOperator: boolean;

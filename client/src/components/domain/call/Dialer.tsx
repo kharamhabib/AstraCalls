@@ -115,7 +115,13 @@ export const Dialer = ({ sid }: { sid: string }) => {
       // Direct call (now or using AI now)
       setBusy(true);
       if (callWithAI) {
-        startCall.mutate({ phone: cleanPhone, record }, {
+        startCall.mutate({
+          phone: cleanPhone,
+          record,
+          ai: true,
+          prompt: customPrompt.trim() || undefined,
+          greeting: enableGreeting ? (customGreeting.trim() || undefined) : undefined
+        }, {
           onSuccess: (callId) => {
             useAIAgents.getState().addScheduledInProgress(callId);
 

@@ -185,14 +185,41 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 	// Auto-atendimento server-side: aceita e acopla IA automaticamente
 	config := s.getAIConfig()
 	if config.ServerSideAI && config.AutoAnswer && config.GeminiAPIKey != "" {
-		s.log.Info("[ServerAI] Auto-atendendo chamada recebida", "callId", callID, "peer", evt.From.String())
+		s.log.Info("[ServerAI] Agendando auto-atendimento", "callId", callID, "peer", evt.From.String(), "delay", config.AutoAnswerDelay)
 
-		// Marca owner como servidor
-		s.mgr.broker.setOwner(callID, serverOwnerID)
-		s.mgr.broker.emitIncomingClaimed(s.id, callID, serverOwnerID)
-
-		// Aceita a chamada
+		// Aceita a chamada com delay opcional
 		go func() {
+			if config.AutoAnswerDelay > 0 {
+				time.Sleep(time.Duration(config.AutoAnswerDelay) * time.Second)
+
+				// Verifica se a chamada ainda existe no registro
+				ac, ok := s.reg.get(callID)
+				if !ok {
+					s.log.Info("[ServerAI] Chamada não encontrada após delay, abortando auto-atendimento", "callId", callID)
+					return
+				}
+
+				// Verifica se a chamada ainda está tocando e não foi atendida ou cancelada
+				callInfo := ac.cm.CurrentCall()
+				if callInfo == nil || callInfo.IsEnded() || callInfo.StateData.State != core.CallStateIncomingRinging {
+					s.log.Info("[ServerAI] Chamada não está mais tocando após delay, abortando", "callId", callID)
+					return
+				}
+
+				// Verifica se algum operador já assumiu a chamada no broker
+				existingRecord, _ := s.mgr.broker.getCall(callID)
+				if existingRecord != nil && existingRecord.Owner != nil && *existingRecord.Owner != "" && *existingRecord.Owner != serverOwnerID {
+					s.log.Info("[ServerAI] Chamada já foi assumida por operador humano, abortando", "callId", callID, "owner", *existingRecord.Owner)
+					return
+				}
+			}
+
+			s.log.Info("[ServerAI] Auto-atendendo chamada recebida", "callId", callID, "peer", evt.From.String())
+
+			// Marca owner como servidor
+			s.mgr.broker.setOwner(callID, serverOwnerID)
+			s.mgr.broker.emitIncomingClaimed(s.id, callID, serverOwnerID)
+
 			if err := cm.AcceptCall(ctx, callID); err != nil {
 				s.log.Error("[ServerAI] Erro ao aceitar chamada", "err", err, "callId", callID)
 				return

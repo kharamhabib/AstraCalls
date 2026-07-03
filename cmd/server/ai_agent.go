@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,6 +63,14 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 
 	// Processa tags dinâmicas no prompt (mesmo comportamento do frontend)
 	now := time.Now()
+	tzEnv := os.Getenv("TZ")
+	if tzEnv == "" {
+		tzEnv = "America/Sao_Paulo"
+	}
+	if loc, err := time.LoadLocation(tzEnv); err == nil {
+		now = now.In(loc)
+	}
+
 	localTime := now.Format("02/01/2006 15:04")
 	_, offset := now.Zone()
 	tzH := offset / 3600
@@ -513,7 +522,15 @@ func (a *ServerAIAgent) executePostCallActions() {
 		}
 	}
 
-	startTime := time.Now().Add(-5 * time.Minute) // estimativa
+	tzEnv := os.Getenv("TZ")
+	if tzEnv == "" {
+		tzEnv = "America/Sao_Paulo"
+	}
+	now := time.Now()
+	if loc, err := time.LoadLocation(tzEnv); err == nil {
+		now = now.In(loc)
+	}
+	startTime := now.Add(-5 * time.Minute) // estimativa
 	formattedDate := startTime.Format("02/01/2006 15:04")
 	dir := "Recebida"
 	if a.direction != "inbound" {

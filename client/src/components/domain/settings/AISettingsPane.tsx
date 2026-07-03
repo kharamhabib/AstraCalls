@@ -189,6 +189,26 @@ export const AISettingsPane = ({ config, onChange, enabled }: AISettingsPaneProp
               </div>
               <Switch checked={config.autoAnswer} onChange={(v) => onChange({ ...config, autoAnswer: v })} />
             </div>
+
+            {config.autoAnswer && (
+              <div className="space-y-2 border-l-2 border-primary/20 pl-4 py-1">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-medium text-muted-foreground">Tempo de toque antes de atender</Label>
+                  <span className="text-xs font-semibold text-primary">
+                    {config.autoAnswerDelay === 0 ? "Imediatamente" : `${config.autoAnswerDelay}s`}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={60}
+                  step={1}
+                  value={config.autoAnswerDelay ?? 0}
+                  onChange={(e) => onChange({ ...config, autoAnswerDelay: parseInt(e.target.value) })}
+                  className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary focus:outline-none"
+                />
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
                 <Label className="text-sm font-medium">Modo Silencioso do Operador</Label>

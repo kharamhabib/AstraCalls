@@ -35,6 +35,7 @@ type AIConfig struct {
 	LanguageCode      string          `json:"languageCode"`
 	SystemInstruction string          `json:"systemInstruction"`
 	AutoAnswer        bool            `json:"autoAnswer"`
+	AutoAnswerDelay   int             `json:"autoAnswerDelay"`
 	Temperature       float64         `json:"temperature"`
 	MaxDurationMin    int             `json:"maxDurationMin"`
 	SilenceOperator   bool            `json:"silenceOperator"`

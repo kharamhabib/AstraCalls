@@ -214,6 +214,22 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
           </div>
         </div>
 
+        {call.status === "ringing" &&
+          call.direction === "inbound" &&
+          aiConfig?.autoAnswer &&
+          (aiConfig.autoAnswerDelay ?? 0) > 0 && (
+            (() => {
+              const remaining = Math.max(0, Math.ceil((call.startedAt + aiConfig.autoAnswerDelay * 1000 - Date.now()) / 1000));
+              if (remaining <= 0) return null;
+              return (
+                <div className="rounded-md bg-amber-500/10 px-3 py-1.5 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400 font-medium animate-pulse flex items-center justify-between">
+                  <span>A IA atenderá automaticamente em:</span>
+                  <span className="font-bold text-sm tabular-nums">{remaining}s</span>
+                </div>
+              );
+            })()
+          )}
+
         <div className="space-y-2">
           <Meter label="Mic" db={micDb} />
           <Meter label="Peer" db={peerDb} />

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"wacalls/internal/voip/call"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
 
@@ -334,12 +336,21 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 		Phone      string `json:"phone"`
 		DurationMs int    `json:"duration_ms"`
 		Record     bool   `json:"record"`
+		AI         bool   `json:"ai"`
+		Prompt     string `json:"prompt"`
+		Greeting   string `json:"greeting"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Phone) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "phone required"})
 		return
 	}
 	owner := clientID(r)
+	config := sess.getAIConfig()
+	isServerAI := body.AI && config.ServerSideAI && config.GeminiAPIKey != ""
+	if isServerAI {
+		owner = serverOwnerID
+	}
+
 	// (removido) regra "1 chamada por operador" — agora o mesmo navegador/aba
 	// pode disparar várias ligações na mesma sessão (até -max-calls-per-session).
 	if max := s.sessions.maxCalls; max > 0 && sess.reg.count() >= max {
@@ -353,10 +364,49 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
 	s.broker.upsertCall(CallRecord{
 		SessionID: sess.id, CallID: callID, Owner: &owner, Direction: "outbound", Peer: peer.String(),
 		StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
 	})
+
+	if isServerAI {
+		ac, ok := sess.reg.get(callID)
+		if ok {
+			agentConfig := config
+			if body.Prompt != "" {
+				agentConfig.SystemInstruction = config.SystemInstruction + "\n\nInstrução adicional para esta chamada específica: " + body.Prompt
+			}
+			if body.Greeting != "" {
+				agentConfig.FirstUtterance = body.Greeting
+			}
+
+			originalOnState := ac.cm.OnStateChange
+			ac.cm.OnStateChange = func(info *call.CallInfo) {
+				if originalOnState != nil {
+					originalOnState(info)
+				}
+				if info.IsEnded() {
+					return
+				}
+				if info.StateData.State == core.CallStateActive {
+					// Chamada conectada — acopla o agente de voz server-side
+					agent := NewServerAIAgent(sess, callID, body.Phone, "outbound", ac.cm, agentConfig, s.log)
+					if err := agent.Start(context.Background()); err != nil {
+						s.log.Error("[ServerAI] Erro ao iniciar agente manual", "err", err, "callId", callID)
+						return
+					}
+					if sess.mgr.Scheduler != nil {
+						sess.mgr.Scheduler.mu.Lock()
+						sess.mgr.Scheduler.agents[callID] = agent
+						sess.mgr.Scheduler.mu.Unlock()
+					}
+					s.log.Info("[ServerAI] Agente IA acoplado à chamada manual", "callId", callID)
+				}
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"call": map[string]string{"callId": callID}})
 }
 
@@ -409,16 +459,58 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such call"})
 		return
 	}
-	owner := clientID(r)
-	if other := s.broker.ownerActiveCall(owner); other != "" && other != id {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "operator already on a call"})
-		return
+
+	var body struct {
+		AI bool `json:"ai"`
 	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	owner := clientID(r)
+	config := sess.getAIConfig()
+	isServerAI := body.AI && config.ServerSideAI && config.GeminiAPIKey != ""
+	if isServerAI {
+		owner = serverOwnerID
+	}
+
+	if !isServerAI {
+		if other := s.broker.ownerActiveCall(owner); other != "" && other != id {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "operator already on a call"})
+			return
+		}
+	}
+
 	if !s.broker.setOwner(id, owner) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "claimed by another client"})
 		return
 	}
 	s.broker.emitIncomingClaimed(sess.id, id, owner)
+
+	if isServerAI {
+		originalOnState := ac.cm.OnStateChange
+		ac.cm.OnStateChange = func(info *call.CallInfo) {
+			if originalOnState != nil {
+				originalOnState(info)
+			}
+			if info.IsEnded() {
+				return
+			}
+			if info.StateData.State == core.CallStateActive {
+				// Chamada conectada — acopla o agente de voz server-side
+				agent := NewServerAIAgent(sess, id, ac.cm.CurrentCall().PeerJid, "inbound", ac.cm, config, s.log)
+				if err := agent.Start(context.Background()); err != nil {
+					s.log.Error("[ServerAI] Erro ao iniciar agente manual inbound", "err", err, "callId", id)
+					return
+				}
+				if sess.mgr.Scheduler != nil {
+					sess.mgr.Scheduler.mu.Lock()
+					sess.mgr.Scheduler.agents[id] = agent
+					sess.mgr.Scheduler.mu.Unlock()
+				}
+				s.log.Info("[ServerAI] Agente IA acoplado à chamada recebida manual", "callId", id)
+			}
+		}
+	}
+
 	if err := ac.cm.AcceptCall(r.Context(), id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

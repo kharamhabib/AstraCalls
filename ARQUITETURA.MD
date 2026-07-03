@@ -1,34 +1,39 @@
 # Arquitetura do Sistema: RockCall
 
-O **RockCall** (anteriormente WaCalls) é uma plataforma VoIP profissional baseada em WhatsApp que permite realizar e receber chamadas de voz diretamente pelo navegador. O sistema conta com uma integração nativa cliente-servidor (Client-Side Bridge) com a **API Gemini Live** (Google), permitindo que agentes de voz inteligentes (IA) atendam ou façam ligações automáticas de forma natural.
+O **RockCall** (anteriormente WaCalls) é uma plataforma VoIP profissional baseada em WhatsApp que permite realizar e receber chamadas de voz diretamente pelo navegador. O sistema suporta dois modos de operação para a **API Gemini Live** (Google), permitindo que agentes de voz inteligentes (IA) atendam ou façam ligações automáticas de forma natural:
+
+1. **Client-Side (Híbrida/Legada)**: O áudio é roteado através do navegador do operador, que gerencia a conexão WebSocket com a IA.
+2. **Server-Side (Autônoma/Nova)**: O servidor Go gerencia tudo diretamente em background (WebSocket + CGO Opus + Pipeline de Áudio), sem necessidade de manter abas de navegador abertas.
 
 ---
 
 ## 1. Visão Geral da Arquitetura
 
 O sistema é dividido em duas partes fundamentais:
-1. **Backend (Go)**: Gerencia o ciclo de vida das sessões do WhatsApp, controla chamadas VoIP, encapsula sinalização de mídia WebRTC, realiza a persistência no PostgreSQL e fornece uma API REST para a interface.
-2. **Frontend (React, TypeScript, Vite)**: Painel do operador que gerencia as conexões de áudio locais (WebRTC), executa a orquestração do loop de áudio com a IA e coordena as automações em tempo real.
+1. **Backend (Go)**: Gerencia o ciclo de vida das sessões do WhatsApp, controla chamadas VoIP, encapsula sinalização de mídia WebRTC, realiza a persistência no PostgreSQL, executa o cliente nativo Gemini Live (`gemini_live.go`), orquestra o loop de áudio server-side (`ai_agent.go`) e expõe a API HTTP/SSE.
+2. **Frontend (React, TypeScript, Vite)**: Painel do operador que gerencia as conexões de áudio locais (WebRTC), conecta o loop de áudio cliente-side (se o modo autônomo estiver desativado) e coordena as transcrições e status recebidos via Server-Sent Events (SSE).
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                                BROWSER (React Frontend)                          │
-│                                                                                  │
-│ ┌────────────────┐      ┌─────────────────────────┐      ┌─────────────────────┐ │
-│ │  Painel Web    │◄────►│    GeminiLiveAgent      │◄────►│  Google Gemini Live │ │
-│ │  (WebRTC Peer) │      │  (Audio Loop & Bridge)  │      │  (Bidi WebSocket)   │ │
-│ └───────┬────────┘      └────────────┬────────────┘      └─────────────────────┘ │
-└─────────┼────────────────────────────┼───────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                BROWSER (React Frontend)                                │
+│                                                                                        │
+│ ┌────────────────┐      ┌─────────────────────────┐ (Se Client-Side) ┌────────────────┐│
+│ │  Painel Web    │◄────►│    GeminiLiveAgent      │◄───────────────►│ Google Gemini  ││
+│ │  (WebRTC Peer) │      │  (Audio Loop & Bridge)  │                 │ (Bidi WebSocket││
+│ └───────┬────────┘      └────────────┬────────────┘                 └────────────────┘│
+└─────────┼────────────────────────────┼─────────────────────────────────────────────────┘
           │ WebRTC (SDP / Opus)        │ PCM 16kHz / 24kHz
           ▼                            ▼
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                                  BACKEND (Go Server)                             │
-│                                                                                  │
-│ ┌────────────────┐      ┌─────────────────────────┐      ┌─────────────────────┐ │
-│ │   HTTP/WS API  │◄────►│       SessionManager    │◄────►│     PostgreSQL      │ │
-│ │  (REST / Event)│      │   (WA Connection / VoIP)│      │  (sessions table)   │ │
-│ └────────────────┘      └─────────────────────────┘      └─────────────────────┘ │
-└──────────────────────────────────────┬───────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                  BACKEND (Go Server)                                   │
+│                                                                                        │
+│ ┌────────────────┐      ┌─────────────────────────┐ (Se Server-Side) ┌────────────────┐│
+│ │   HTTP/SSE API │◄────►│   ServerAIAgent / CGO   │◄───────────────►│ Google Gemini  ││
+│ │ (REST / Events)│      │  (Audio Loop / Codec)   │                 │ (Bidi WebSocket││
+│ └────────────────┘      └────────────┬────────────┘                 └────────────────┘│
+│                                      ▼                                                 │
+│                              SessionManager (VoIP)◄─────────► PostgreSQL (Database)    │
+└──────────────────────────────────────┬─────────────────────────────────────────────────┘
                                        │ VoIP (WhatsApp Prot)
                                        ▼
                               WhatsApp VoIP Server
@@ -43,12 +48,13 @@ O sistema é dividido em duas partes fundamentais:
 * **Banco de Dados**: PostgreSQL (armazenamento de credenciais de pareamento, logs de chamadas e configurações da IA)
 * **Processamento de Mídia**: CGO com wrapping de codecs Opus nativos (`opus_mlow` do WhatsApp)
 * **Protocolo**: Sinalização de VoIP via nós binários do WhatsApp e transporte de mídia UDP (SRTP) intermediado por WebRTC.
+* **Comunicação Gemini**: WebSocket bidirecional nativo (`github.com/gorilla/websocket`) para comunicação direta com a API Gemini Live.
 
 ### Frontend
 * **Core**: React 18, TypeScript, Vite
-* **Estilização**: CSS modular e TailwindCSS
+* **Estilização**: CSS modular e Vanilla CSS
 * **Estado**: Zustand (Stores globais leves para controle de chamadas e IA)
-* **Comunicação**: Event Stream de mão única via SSE/Long-polling (`/api/events`) e requisições HTTP REST.
+* **Comunicação**: Event Stream de mão única via SSE (Server-Sent Events) no endpoint `/api/events` e requisições HTTP REST.
 
 ---
 
@@ -59,16 +65,23 @@ astracall/AstraCalls/
 ├── cmd/
 │   ├── migrate/                     # Migrações e setup do PostgreSQL
 │   └── server/                      # Servidor Go Principal
-│       ├── aiconfig.go              # [NOVO] Handlers REST de configuração da IA
-│       ├── httpapi.go               # Definição e rotas da API HTTP/WebRTC
-│       ├── session.go               # Estado de conexão ativa do WhatsApp e VoIP
+│       ├── ai_agent.go              # [NOVO] Agente de voz server-side (WA<->Gemini + tools + post-call)
+│       ├── ai_scheduler.go          # [NOVO] Scheduler background de ligações programadas do servidor
+│       ├── aiconfig.go              # Handlers REST de configuração da IA
+│       ├── gemini_live.go           # [NOVO] Cliente WebSocket nativo em Go para a API Gemini Live
+│       ├── httpapi.go               # Definição e rotas da API HTTP/WebRTC e SSE
+│       ├── server.go                # Inicialização do servidor e acoplamento do scheduler
+│       ├── session.go               # Estado de conexão ativa do WhatsApp, VoIP e auto-atendimento server-side
 │       ├── sessionmanager.go        # Ciclo de vida e restauração de sessões do banco
-│       └── sessionstore.go          # Operações de banco (Postgres) e migração da coluna ai_config
+│       └── sessionstore.go          # Operações de banco (Postgres)
 ├── internal/
 │   └── voip/
-│       ├── call/                    # Máquina de estados das chamadas e CallManager
+│       ├── call/                    # Máquina de estados das chamadas e CallManager (CGO + Mutexes)
+│       │   ├── callmanager.go       # Gerenciador de chamada e sincronização de concorrência
+│       │   ├── callmanager_media.go # Processamento de fluxos RTP e de-duplicação de pacotes
+│       │   └── callstate.go         # Definição dos estados e transições de chamadas
 │       ├── media/                   # Decodificação Opus/PCM e manipulação de fluxos RTP
-│       └── signaling/               # Sinalização VoIP do WhatsApp (Accept, Offer, Reject)
+│       └── signaling/               # Sinalização VoIP do WhatsApp (Accept, Offer, Reject, Transport)
 ├── client/                          # Código Frontend React/TypeScript
 │   ├── index.html                   # Documento raiz rebranded para RockCall
 │   └── src/
@@ -76,34 +89,28 @@ astracall/AstraCalls/
 │       ├── components/
 │       │   ├── layout/AppShell.tsx  # Layout estrutural rebranded para RockCall
 │       │   └── domain/
-│       │       ├── call/CallCard.tsx# Cartão de chamada com botão da IA e transcrição
-│       │       └── session/AIDialog.tsx # [NOVO] Dialog de voz e agendamentos de ligações
+│       │       ├── call/CallCard.tsx# Cartão de chamada com botão da IA e transcrição SSE
+│       │       └── session/AIDialog.tsx # Dialog de voz, toggles de IA e agendamento de ligações
 │       ├── hooks/
-│       │   ├── useAICallHandler.ts  # [NOVO] Hook de atendimento automático
-│       │   └── useAICallScheduler.ts# [NOVO] Hook de disparo de ligações programadas
+│       │   ├── useAICallHandler.ts  # Hook de atendimento automático (com suporte a serverSideAI)
+│       │   └── useAICallScheduler.ts# Hook de disparo de ligações programadas no client
 │       ├── lib/
-│       │   ├── gemini-live.ts       # [NOVO] WebSocket Gemini, PCMPlayer e WebRTC Bridge
+│       │   ├── gemini-live.ts       # WebSocket Gemini, PCMPlayer e WebRTC Bridge (Client-side)
 │       │   └── webrtc.ts            # Gerenciador de conexão RTCPeerConnection local
 │       ├── stores/
-│       │   └── ai.ts                # [NOVO] Estado global Zustand de IA e transcrições
+│       │   └── ai.ts                # Estado global Zustand de IA e transcrições
 │       └── types/
-│           └── ai.ts                # [NOVO] Definições de tipo para AIConfig e ScheduledCall
+│           └── ai.ts                # Definições de tipo para AIConfig e ScheduledCall
 ```
 
 ---
 
-## 4. Pipeline de Áudio com a IA (Gemini Live Bridge)
+## 4. Pipeline de Áudio com a IA (Gemini Live)
 
+O RockCall suporta duas arquiteturas para processamento e transmissão de áudio da chamada para a IA:
+
+### 4.1 Modo Client-Side (Bridge no Navegador)
 A ponte de áudio opera inteiramente do lado do cliente (no navegador do operador). Isso elimina latência de transporte no backend e simplifica a infraestrutura de rede.
-
-### 4.1 Captura (Cliente/Chamada → Gemini Live)
-1. O navegador estabelece a chamada VoIP e obtém o `remoteStream` (áudio do cliente vindo do WhatsApp).
-2. O `AudioContext` do navegador captura esse stream e o converte para **16kHz mono** (taxa ideal exigida pelo Gemini).
-3. Um `ScriptProcessorNode` coleta blocos de áudio de 2048 amostras em Float32, converte-os em **PCM 16-bit linear (Int16Array)** e os codifica em Base64.
-4. **Prevenção de Interrupção Acidental (Barge-in Control)**: Para evitar que ecos de áudio ou pequenos cliques/ruídos de fundo no canal VoIP silenciem ou cortem a fala da IA acidentalmente, o fluxo do microfone do cliente é ignorado (`onaudioprocess` retorna antecipadamente) enquanto o `PCMPlayer` estiver tocando áudio da IA (`isPlaying() === true`).
-5. O chunk de áudio é empacotado em uma mensagem JSON e enviado via WebSocket:
-   ```json
-   {
      "realtimeInput": {
        "audio": {
          "data": "BASE64_PCM_DATA...",
@@ -126,35 +133,35 @@ A ponte de áudio opera inteiramente do lado do cliente (no navegador do operado
 
 ## 5. Automações e Hooks em Background
 
-O RockCall possui dois motores de automação em background que executam a nível global no React:
+O RockCall possui três motores de automação em background:
 
-### 5.1 Atendimento Automático (`useAICallHandler.ts`)
-* Escuta mudanças na store de chamadas.
-* Se surgir uma chamada recebida (`incoming`) e o `autoAnswer` estiver ativado nas configurações da IA para aquela sessão:
-  1. Efetua a aceitação automática da chamada no backend (`acceptCall`).
-  2. Conecta o `GeminiLiveAgent` na chamada assim que o status dela transicionar para `connected`.
-  3. **Trava de Inicialização (Race Condition Prevention)**: Utiliza a referência `startingAgentsRef` para bloquear múltiplas tentativas concorrentes de inicialização de agentes de IA para a mesma chamada (decorrentes de disparos paralelos do hook React durante a resolução assíncrona da Promise da API).
-  4. Desativa o microfone físico do operador local para manter a privacidade do ambiente.
+### 5.1 Atendimento Automático (Auto Answer)
+* **No Client (React)**: Monitorado por `useAICallHandler.ts`. Se surgir uma chamada recebida (`incoming`) e o `autoAnswer` estiver ativado (com `serverSideAI` desativado), o React efetua a aceitação automática da chamada no backend (`acceptCall`) e acopla o `GeminiLiveAgent` local assim que a chamada transicionar para `connected`.
+* **No Server (Go)**: Se `serverSideAI` e `autoAnswer` estiverem ativados, a função `onIncomingOffer` em [session.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/cmd/server/session.go) aceita a chamada automaticamente após o tempo de delay configurado em `autoAnswerDelay` (de 0 a 60 segundos). Antes do aceite, o servidor valida se a chamada ainda está tocando e não foi interceptada/atendida por um operador humano, criando o agente autônomo `ServerAIAgent` assim que a chamada atingir o estado `CallStateActive`.
 
-### 5.2 Disparo de Ligações Programadas (`useAICallScheduler.ts`)
-* Executa uma verificação a cada 10 segundos.
-* **Prevenção de Sobreposição (Canal Ocupado)**: Caso já exista alguma chamada ativa em andamento (`calls.length > 0`) ou uma chamada recebida tocando (`incoming !== null`), ele pula a verificação para não criar colisões de áudio.
-* Se a linha estiver livre, compara os horários salvos no banco. Se o horário de um agendamento ativo passou:
-  1. Remove o agendamento da lista (disparo único) e atualiza a configuração no banco PostgreSQL.
-  2. Dispara a chamada ativa externa (`startCall`).
-  3. Adiciona o ID da chamada gerada na fila `scheduledCallsInProgress`.
-  4. Quando a chamada for atendida e transicionar para o estado `connected`, o `useAICallHandler` detectará a chamada programada e acoplará o agente do Gemini Live de forma transparente.
 
-### 5.3 Ligações Manuais Iniciadas por IA via Dialer (`Dialer.tsx`)
-O operador pode iniciar uma chamada manual direcionada para o agente de IA:
-1. **Ligar com IA (Checkbox)**: Quando marcado, a chamada é disparada pelo dialer. Assim que o ID da chamada é retornado pelo backend, o dialer registra o ID em `scheduledCallsInProgress` na store, fazendo com que o `useAICallHandler` acople automaticamente a IA assim que conectar.
-2. **Instrução Adicional (Custom Prompt)**: Permite definir instruções exclusivas para essa ligação (ex: "ligue para Luísa e confirme sua reserva"). Essa instrução é armazenada temporariamente na store Zustand mapeada por `callId` e concatenada às `systemInstruction` da IA quando a conexão WebSocket é estabelecida.
-3. **Engajar Primeira Fala (Custom Greeting)**: Força a IA a iniciar a fala assim que a chamada conecta. Se ativo, o dialer ou configuração global envia uma mensagem de texto inicial para o WebSocket do Gemini (`this.session.sendText`), provocando o processamento imediato de resposta de voz (TTS) contendo a saudação configurada.
+### 5.2 Disparo de Ligações Programadas (Scheduler)
+* **No Client (React)**: Executado por `useAICallScheduler.ts` a cada 10 segundos caso `serverSideAI` esteja desativado. Verifica agendamentos vencidos na lista, dispara a chamada e adiciona o ID em `scheduledCallsInProgress` para o handler acoplar a IA local.
+* **No Server (Go)**: Gerenciado por `AIScheduler` em [ai_scheduler.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/cmd/server/ai_scheduler.go) a cada 10 segundos caso `serverSideAI` esteja ativado. O ticker verifica se há agendamentos que já venceram, marca o agendamento como inativo no PostgreSQL, inicia a chamada ativa via WhatsApp e configura o callback `OnStateChange` para acoplar o `ServerAIAgent` assim que a chamada transicionar para ativa.
+
+### 5.3 Ações Pós-Chamada (Post-Call Actions)
+Ao final de uma chamada gerenciada pelo servidor:
+1. O agente autônomo recupera o log completo da transcrição gerada durante a chamada.
+2. Faz uma chamada via REST API do Gemini para gerar um resumo executivo muito objetivo e profissional.
+3. Envia o resumo formatado para o WhatsApp do administrador e do cliente (se configurado).
+4. Dispara webhooks HTTP externos com o payload contendo o ID da chamada, resumo, transcrição completa e metadados de duração.
 
 ---
 
-## 6. Pontos Chaves e Regras de Segurança
+## 6. Resiliência, Concorrência e Regras de Segurança
 
-* **Segurança de API Key**: A chave de API do Gemini inserida pelo painel é salva no banco de dados vinculada à sessão do WhatsApp. O painel web recupera essa chave para conectar-se diretamente com o endpoint do Google.
+Para suportar chamadas simultâneas estáveis diretamente no servidor e evitar travamentos no processamento de mídia CGO:
+
+* **Proteção Concorrente no Codec (`onRelayData`)**: O WhatsApp estabelece conexão com múltiplos relays de mídia WebRTC, fazendo com que o mesmo pacote RTP seja recebido simultaneamente em goroutines paralelas. Uma `recvMu sync.Mutex` em `CallManager` serializa a descriptografia (SRTP) e decodificação (Opus CGO).
+* **De-duplicação de Pacotes RTP**: O `CallManager` mantém um histórico deslizante dos últimos 64 números de sequência RTP recebidos (`rtpHistory`). Se um pacote duplicado for recebido via outro relay de mídia, ele é sumariamente descartado antes de entrar no decodificador CGO, economizando CPU e evitando corrupção de memória.
+* **Prevenção de Disparos Concorrentes de Agendamento**: O `AIScheduler` mantém um controle em memória dos IDs de agendamento em trânsito (`triggeringIds`). Isso garante que um agendamento nunca seja disparado duas vezes caso haja lentidão na gravação das configurações no banco de dados. Os agentes e locks são limpos em memória via `CleanupAgent` ao detectar o encerramento da chamada.
+* **Isolamento de Sinalização (Filtro de Loopback)**: Eventos do tipo `CallAccept` vindos do WhatsApp são processados apenas se a chamada correspondente em registro for do tipo `Outgoing` (iniciada pelo servidor). Isso impede que o receptor de uma chamada processe o seu próprio recibo de aceitação em loopback como se fosse um aceite do peer remoto, garantindo integridade de estado.
+* **Atraso de Auto-Atendimento e Intercepção Humana**: Tanto no cliente quanto no servidor, a IA aguarda o tempo definido pelo slider `autoAnswerDelay` (0 a 60s) antes de aceitar chamadas de entrada. Durante esse intervalo, o operador humano pode atender à chamada no navegador ou no celular. Caso a chamada mude de estado ou seja assumida por um humano, a rotina de auto-atendimento da IA é cancelada imediatamente.
+* **Segurança de API Key**: A chave de API do Gemini inserida pelo painel é salva no banco de dados criptografada ou de forma segura vinculada à sessão do WhatsApp. O painel web recupera essa chave para conectar-se diretamente com o endpoint do Google (se client-side), ou o servidor Go a lê no boot da chamada para autenticar o WebSocket (se server-side).
 * **Independência de Processo**: O rebranding visual de visualização para **RockCall** foi feito estritamente no frontend (React, HTML). Os pacotes Go, caminhos de importação internos e binários de compilação mantiveram os nomes originais (`wacalls`) para não quebrar referências do sistema de build nativo e das dependências CGO Opus.
-* **Persistência de Transcrições**: As falas do usuário e da IA são agrupadas na store do Zustand (`transcripts`) por tempo e por orador, e renderizadas dinamicamente dentro do `CallCard` ativo.
+* **Persistência de Transcrições**: As falas do usuário e da IA são agrupadas na store do Zustand (`transcripts`) por tempo e por orador (se client-side), ou transmitidas via SSE e salvas temporariamente na memória do agente para geração do resumo (se server-side).

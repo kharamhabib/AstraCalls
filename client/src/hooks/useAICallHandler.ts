@@ -33,11 +33,26 @@ export const useAICallHandler = () => {
         // Se a IA autônoma no servidor está ativada, o Go cuida do auto-atendimento
         if (enabled && aiConfig && aiConfig.serverSideAI) return;
         if (enabled && aiConfig && aiConfig.autoAnswer) {
-          toast.info(`Chamada recebida de ${incoming.peer}. Atendendo automaticamente com IA...`);
-          acceptCallMutation.mutate({
-            sid: incoming.sessionId,
-            callId: incoming.callId,
-          });
+          const delay = aiConfig.autoAnswerDelay ? aiConfig.autoAnswerDelay * 1000 : 0;
+          
+          const answerFn = () => {
+            // Verifica se a chamada ainda está tocando/pendente e se o operador não atendeu
+            const currentIncoming = useCalls.getState().incoming;
+            if (currentIncoming && currentIncoming.callId === incoming.callId) {
+              toast.info(`Atendendo automaticamente com IA...`);
+              acceptCallMutation.mutate({
+                sid: incoming.sessionId,
+                callId: incoming.callId,
+              });
+            }
+          };
+
+          if (delay > 0) {
+            setTimeout(answerFn, delay);
+          } else {
+            toast.info(`Chamada recebida de ${incoming.peer}. Atendendo automaticamente com IA...`);
+            answerFn();
+          }
         }
       } catch (e) {
         console.error("Erro ao verificar atendimento automático", e);

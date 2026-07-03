@@ -79,6 +79,7 @@ Hoje é [today] e você está falando com o cliente do número [phone]. Esta é 
 * Ferramenta \`hangup\` (Encerrar Chamada): Quando a conversa estiver resolvida, o cliente se despedir e não houver mais nenhuma pendência, agradeça pelo contato, despeça-se educadamente e chame a ferramenta \`hangup\` para desligar a ligação. Nunca deixe a ligação em silêncio ou pendente após a despedida.`,
   serverSideAI: false,
   autoAnswer: false,
+  autoAnswerDelay: 0,
   temperature: 1.0,
   maxDurationMin: 5,
   silenceOperator: false,
@@ -127,6 +128,7 @@ export const AIDialog = ({ sid }: { sid: string }) => {
           languageCode: c.languageCode || "pt-BR",
           systemInstruction: c.systemInstruction || defaultConfig.systemInstruction,
           autoAnswer: !!c.autoAnswer,
+          autoAnswerDelay: c.autoAnswerDelay ?? 0,
           temperature: c.temperature ?? 1.0,
           maxDurationMin: c.maxDurationMin ?? 5,
           silenceOperator: !!c.silenceOperator,
@@ -397,6 +399,26 @@ export const AIDialog = ({ sid }: { sid: string }) => {
                     onChange={(v) => setConfig({ ...config, autoAnswer: v })}
                   />
                 </div>
+
+                {config.autoAnswer && (
+                  <div className="space-y-2 border-l-2 border-primary/20 pl-4 py-1">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-medium text-muted-foreground">Tempo de toque antes de atender</Label>
+                      <span className="text-xs font-semibold text-primary">
+                        {config.autoAnswerDelay === 0 ? "Imediatamente" : `${config.autoAnswerDelay}s`}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={60}
+                      step={1}
+                      value={config.autoAnswerDelay ?? 0}
+                      onChange={(e) => setConfig({ ...config, autoAnswerDelay: parseInt(e.target.value) })}
+                      className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary focus:outline-none"
+                    />
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
