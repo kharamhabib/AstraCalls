@@ -36,7 +36,8 @@ export type AIConfig = {
   scheduledCalls: string; // JSON string contendo o array de ScheduledCall
   firstUtterance?: string;
   toolsEnabled: boolean;
-  predefinedTools: string[]; // e.g. ["hangup", "human_transfer", "send_message"]
+  predefinedTools: string[]; // e.g. ["hangup", "open_ticket", "send_message"]
+  toolPrompts: Record<string, string>;
   customTools: CustomTool[];
   postCall: PostCallActions;
   customFields?: string;

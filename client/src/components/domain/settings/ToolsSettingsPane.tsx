@@ -53,6 +53,12 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
     onChange({ ...config, predefinedTools: next });
   };
 
+  const handlePromptChange = (tool: string, prompt: string) => {
+    const nextPrompts = { ...(config.toolPrompts || {}) };
+    nextPrompts[tool] = prompt;
+    onChange({ ...config, toolPrompts: nextPrompts });
+  };
+
   const handleAddParam = () => {
     const trimmed = paramName.trim().replace(/[^a-zA-Z0-9_]/g, "");
     if (!trimmed) return;
@@ -122,91 +128,143 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
           <Card className="card-premium">
             <CardContent className="p-4 space-y-4">
               {/* Hangup */}
-              <div className="flex items-center justify-between border-b pb-3">
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <Label className="text-sm font-semibold cursor-pointer" htmlFor="tool-hangup">
-                      Desligar Chamada (hangup)
-                    </Label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>Permite que a IA encerre a ligação quando o assunto for concluído.</TooltipContent>
-                    </Tooltip>
+              <div className="border-b pb-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-sm font-semibold cursor-pointer">
+                        Desligar Chamada (hangup)
+                      </Label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>Permite que a IA encerre a ligação quando o assunto for concluído.</TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Desliga o telefone e encerra a conexão.</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">Desliga o telefone e encerra a conexão.</p>
+                  <Switch
+                    checked={config.predefinedTools?.includes("hangup") || false}
+                    onChange={() => toggleTool("hangup")}
+                  />
                 </div>
-                <Switch
-                  checked={config.predefinedTools?.includes("hangup") || false}
-                  onChange={() => toggleTool("hangup")}
-                />
+                {config.predefinedTools?.includes("hangup") && (
+                  <div className="space-y-1.5 px-1 animate-slide-down">
+                    <Label className="text-xs font-semibold text-muted-foreground">Instruções para Desligar (hangup)</Label>
+                    <textarea
+                      className="w-full min-h-[60px] text-xs rounded-md border border-input bg-transparent px-3 py-2 shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      value={config.toolPrompts?.["hangup"] ?? ""}
+                      onChange={(e) => handlePromptChange("hangup", e.target.value)}
+                      placeholder="Ex: Como a IA deve se despedir e desligar..."
+                    />
+                  </div>
+                )}
               </div>
 
-              {/* Human Transfer */}
-              <div className="flex items-center justify-between border-b pb-3">
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <Label className="text-sm font-semibold cursor-pointer" htmlFor="tool-transfer">
-                      Transferir para Humano (human_transfer)
-                    </Label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>Desconecta a IA, toca um alerta e devolve o áudio para o microfone do operador.</TooltipContent>
-                    </Tooltip>
+              {/* Open Ticket */}
+              <div className="border-b pb-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-sm font-semibold cursor-pointer">
+                        Abrir Chamado (open_ticket)
+                      </Label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>Abre um chamado para que um atendente humano retorne o contato, desligando a ligação logo em seguida.</TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Registra uma solicitação de retorno para o cliente no painel.</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">Transfere o controle da ligação para você.</p>
+                  <Switch
+                    checked={config.predefinedTools?.includes("open_ticket") || false}
+                    onChange={() => toggleTool("open_ticket")}
+                  />
                 </div>
-                <Switch
-                  checked={config.predefinedTools?.includes("human_transfer") || false}
-                  onChange={() => toggleTool("human_transfer")}
-                />
+                {config.predefinedTools?.includes("open_ticket") && (
+                  <div className="space-y-1.5 px-1 animate-slide-down">
+                    <Label className="text-xs font-semibold text-muted-foreground">Instruções para Abrir Chamado (open_ticket)</Label>
+                    <textarea
+                      className="w-full min-h-[60px] text-xs rounded-md border border-input bg-transparent px-3 py-2 shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      value={config.toolPrompts?.["open_ticket"] ?? ""}
+                      onChange={(e) => handlePromptChange("open_ticket", e.target.value)}
+                      placeholder="Ex: Quando a IA deve abrir o chamado e avisar o cliente..."
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Send Message */}
-              <div className="flex items-center justify-between border-b pb-3">
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <Label className="text-sm font-semibold cursor-pointer" htmlFor="tool-message">
-                      Enviar Mensagem de Texto (send_message)
-                    </Label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>Permite que a IA envie mensagens de confirmação ou dados por texto no WhatsApp do cliente.</TooltipContent>
-                    </Tooltip>
+              <div className="border-b pb-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-sm font-semibold cursor-pointer">
+                        Enviar Mensagem de Texto (send_message)
+                      </Label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>Permite que a IA envie mensagens de confirmação ou dados por texto no WhatsApp do cliente.</TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Envia mensagem via WhatsApp durante a chamada.</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">Envia mensagem via WhatsApp durante a chamada.</p>
+                  <Switch
+                    checked={config.predefinedTools?.includes("send_message") || false}
+                    onChange={() => toggleTool("send_message")}
+                  />
                 </div>
-                <Switch
-                  checked={config.predefinedTools?.includes("send_message") || false}
-                  onChange={() => toggleTool("send_message")}
-                />
+                {config.predefinedTools?.includes("send_message") && (
+                  <div className="space-y-1.5 px-1 animate-slide-down">
+                    <Label className="text-xs font-semibold text-muted-foreground">Instruções para Enviar Mensagem (send_message)</Label>
+                    <textarea
+                      className="w-full min-h-[60px] text-xs rounded-md border border-input bg-transparent px-3 py-2 shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      value={config.toolPrompts?.["send_message"] ?? ""}
+                      onChange={(e) => handlePromptChange("send_message", e.target.value)}
+                      placeholder="Ex: Que tipo de informações a IA pode enviar via mensagem..."
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Schedule Call */}
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <Label className="text-sm font-semibold cursor-pointer" htmlFor="tool-schedule">
-                      Agendar/Reagendar Ligação (schedule_call)
-                    </Label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>Permite que a IA agende uma ligação futura ou reagende a ligação caso o cliente peça para retornar depois.</TooltipContent>
-                    </Tooltip>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-sm font-semibold cursor-pointer">
+                        Agendar/Reagendar Ligação (schedule_call)
+                      </Label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>Permite que a IA agende uma ligação futura ou reagende a ligação caso o cliente peça para retornar depois.</TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Cria uma ligação programada nas tarefas da IA.</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">Cria uma ligação programada nas tarefas da IA.</p>
+                  <Switch
+                    checked={config.predefinedTools?.includes("schedule_call") || false}
+                    onChange={() => toggleTool("schedule_call")}
+                  />
                 </div>
-                <Switch
-                  checked={config.predefinedTools?.includes("schedule_call") || false}
-                  onChange={() => toggleTool("schedule_call")}
-                />
+                {config.predefinedTools?.includes("schedule_call") && (
+                  <div className="space-y-1.5 px-1 animate-slide-down">
+                    <Label className="text-xs font-semibold text-muted-foreground">Instruções para Agendar Ligação (schedule_call)</Label>
+                    <textarea
+                      className="w-full min-h-[60px] text-xs rounded-md border border-input bg-transparent px-3 py-2 shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      value={config.toolPrompts?.["schedule_call"] ?? ""}
+                      onChange={(e) => handlePromptChange("schedule_call", e.target.value)}
+                      placeholder="Ex: Como a IA deve solicitar data/hora e confirmar o agendamento..."
+                    />
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

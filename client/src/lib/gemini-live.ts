@@ -117,11 +117,16 @@ export class GeminiLiveSession {
             });
           }
 
-          if (this.config.predefinedTools?.includes("human_transfer")) {
+          if (this.config.predefinedTools?.includes("open_ticket")) {
             functionDeclarations.push({
-              name: "human_transfer",
-              description: "Transfere a chamada para um atendente humano imediatamente. Use isso quando o cliente solicitar falar com um humano, ou quando o assunto for complexo demais.",
-              parameters: { type: "OBJECT", properties: {} }
+              name: "open_ticket",
+              description: "Abre um chamado de suporte ou contato para que um atendente humano retorne para o cliente por chat ou ligação.",
+              parameters: {
+                type: "OBJECT",
+                properties: {
+                  reason: { type: "STRING", description: "O motivo do chamado ou solicitação do cliente." }
+                }
+              }
             });
           }
 
@@ -404,6 +409,27 @@ export class GeminiLiveAgent {
 
     // Processamento de Tags Dinâmicas no Prompt
     let processedPrompt = (this.config.systemInstruction || "") + extraPrompt;
+
+    if (this.config.toolsEnabled && this.config.predefinedTools) {
+      const toolRules: string[] = [];
+      const defaultPrompts: Record<string, string> = {
+        hangup: "* Ferramenta hangup (Desligar Chamada): Quando a conversa estiver resolvida, o cliente se despedir e não houver mais nenhuma pendência, agradeça pelo contato, despeça-se educadamente e chame a ferramenta hangup para desligar a ligação. Nunca deixe a ligação em silêncio ou pendente após a despedida.",
+        open_ticket: "* Ferramenta open_ticket (Abrir Chamado): Use esta ferramenta quando o cliente solicitar falar com um atendente humano, suporte ou precisar de ajuda especializada que a IA não consiga resolver. Pergunte brevemente o motivo do chamado, informe ao cliente que um chamado foi aberto e que um atendente entrará em contato por ligação ou pelo chat, e execute a ferramenta.",
+        send_message: "* Ferramenta send_message (Enviar WhatsApp): Use esta ferramenta quando o cliente solicitar que você envie informações por escrito, como um código de barras, chave Pix, link de confirmação, ou endereço. Diga ao cliente: \"Estou te enviando esses dados agora mesmo no seu WhatsApp\" e execute a ferramenta.",
+        schedule_call: "* Ferramenta schedule_call (Reagendar/Agendar Ligação): Se o cliente disser que não pode falar no momento, pedir para retornar mais tarde, ou solicitar um lembrete (ex: \"me ligue e confirme a reunião as 10 da manhã\"), pergunte educadamente pela data e hora desejada. Calcule a data/hora exata relativa ao horário atual ([today]) e execute esta ferramenta preenchendo o parâmetro 'datetime' em formato ISO e 'prompt' com o roteiro ou lembrete (ex: \"Confirmar reunião\"). Confirme para o cliente o agendamento antes de desligar."
+      };
+
+      for (const name of this.config.predefinedTools) {
+        const promptText = this.config.toolPrompts?.[name] || defaultPrompts[name];
+        if (promptText) {
+          toolRules.push(promptText);
+        }
+      }
+
+      if (toolRules.length > 0) {
+        processedPrompt += "\n\n### REGRAS PARA O USO DE FERRAMENTAS (APIS):\n* Se a ferramenta exigir argumentos (como a mensagem de texto ou número no send_message), extraia-os naturalmente da fala do usuário ou use os valores padrões fornecidos, sem soletrar os parâmetros tecnicamente para o cliente.\n" + toolRules.join("\n");
+      }
+    }
     const call = useCalls.getState().calls.find((c) => c.callId === this.callId);
     const direction = call?.direction === "inbound" ? "entrada (recebida)" : "saída (efetuada)";
     const phone = call?.peer || "desconhecido";
@@ -559,29 +585,37 @@ export class GeminiLiveAgent {
       return { status: "chamada será desligada após a despedida" };
     }
 
-    if (name === "human_transfer") {
-      console.log("[GeminiAgent] Tool human_transfer disparada. Aguardando fim da fala...");
+    if (name === "open_ticket") {
+      console.log("[GeminiAgent] Tool open_ticket disparada. Aguardando fim da fala...", args);
+      const reason = args.reason || "";
       setTimeout(async () => {
         await this.waitForAudioFinish();
         this.detach().catch(() => {});
-        toast.warning("A IA transferiu a chamada para você! Pegue o fone.");
+        toast.info("A IA registrou um chamado para o cliente.");
 
-        // Toca aviso sonoro (synth beep)
-        try {
-          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-          const ctx = new AudioContextClass();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.type = "sine";
-          osc.frequency.setValueAtTime(880, ctx.currentTime);
-          gain.gain.setValueAtTime(0.3, ctx.currentTime);
-          osc.start();
-          osc.stop(ctx.currentTime + 0.4);
-        } catch {}
+        if (call) {
+          // Notifica o backend para registrar o chamado no histórico
+          fetch(apiUrl(`/api/sessions/${call.sessionId}/history/${this.callId}/ticket`), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-API-Key": getApiKey(),
+              "X-Client-Id": getClientId(),
+            },
+            body: JSON.stringify({ reason })
+          }).catch(() => {});
+
+          // Desliga a chamada localmente
+          fetch(apiUrl(`/api/sessions/${call.sessionId}/calls/${this.callId}`), {
+            method: "DELETE",
+            headers: {
+              "X-API-Key": getApiKey(),
+              "X-Client-Id": getClientId(),
+            }
+          }).catch(() => {});
+        }
       }, 100);
-      return { status: "transferência iniciada" };
+      return { status: "chamado aberto com sucesso" };
     }
 
     if (name === "send_message") {

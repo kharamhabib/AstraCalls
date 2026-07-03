@@ -8,4 +8,6 @@ export type HistoryRow = {
   endedAt: number | null;
   endReason: string | null;
   summary?: string;
+  ticketOpened?: boolean;
+  ticketReason?: string;
 };

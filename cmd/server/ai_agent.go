@@ -61,6 +61,23 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 		inboundStop: make(chan struct{}),
 	}
 
+	// Concatena os prompts das ferramentas habilitadas (modularidade de prompt)
+	if config.ToolsEnabled {
+		var toolRules []string
+		for _, name := range config.PredefinedTools {
+			promptText := config.ToolPrompts[name]
+			if promptText == "" {
+				promptText = DefaultToolPrompts[name]
+			}
+			if promptText != "" {
+				toolRules = append(toolRules, promptText)
+			}
+		}
+		if len(toolRules) > 0 {
+			config.SystemInstruction += "\n\n### REGRAS PARA O USO DE FERRAMENTAS (APIS):\n* Se a ferramenta exigir argumentos (como a mensagem de texto ou número no send_message), extraia-os naturalmente da fala do usuário ou use os valores padrões fornecidos, sem soletrar os parâmetros tecnicamente para o cliente.\n" + strings.Join(toolRules, "\n")
+		}
+	}
+
 	// Processa tags dinâmicas no prompt (mesmo comportamento do frontend)
 	now := time.Now()
 	tzEnv := os.Getenv("TZ")
@@ -330,17 +347,41 @@ func (a *ServerAIAgent) handleToolCall(ctx context.Context, name string, args ma
 		}()
 		return map[string]any{"status": "chamada sendo encerrada"}
 
-	case "human_transfer":
-		a.log.Info("[ServerAIAgent] Tool human_transfer disparada")
-		a.Detach()
-		// Emite evento para transferência humana (remove owner __server__)
-		a.sess.mgr.broker.broadcast(map[string]any{
-			"type":      "ai-agent-active",
-			"sessionId": a.sess.id,
-			"callId":    a.callID,
-			"server":    false,
-		})
-		return map[string]any{"status": "transferido para operador humano"}
+	case "open_ticket":
+		a.log.Info("[ServerAIAgent] Tool open_ticket disparada", "args", args)
+		reason, _ := args["reason"].(string)
+
+		// Sinaliza no broker que a chamada teve um chamado aberto
+		if rec, ok := a.sess.mgr.broker.getCall(a.callID); ok {
+			rec.TicketOpened = true
+			rec.TicketReason = reason
+			a.sess.mgr.broker.upsertCall(*rec)
+		}
+
+		// Envia a notificação do chamado pelo WhatsApp para o admin se configurado
+		config := a.sess.getAIConfig()
+		if config.PostCall.SendAdmin && config.PostCall.AdminNumber != "" {
+			go func() {
+				adminJid, err := resolveRecipient(config.PostCall.AdminNumber)
+				if err == nil {
+					contactName := a.resolveContactPhone(context.Background())
+					msg := fmt.Sprintf("⚠️ *Novo Chamado Aberto pela IA*\n\n• *Cliente:* %s\n• *Sessão:* %s\n• *Motivo:* %s\n• *ID Chamada:* %s", contactName, a.sess.name, reason, a.callID)
+					_, _ = a.sess.client.SendMessage(context.Background(), adminJid, &waE2E.Message{
+						Conversation: proto.String(msg),
+					})
+				}
+			}()
+		}
+
+		// Aguarda brevemente para a IA terminar de falar e desligar
+		go func() {
+			time.Sleep(3 * time.Second)
+			a.Detach()
+			a.sess.terminateCall(a.callID, core.EndCallReasonUserEnded)
+			a.sess.removeCall(a.callID)
+			a.sess.mgr.broker.endCall(a.callID, string(core.EndCallReasonUserEnded))
+		}()
+		return map[string]any{"status": "chamado aberto com sucesso"}
 
 	case "send_message":
 		return a.toolSendMessage(ctx, args)

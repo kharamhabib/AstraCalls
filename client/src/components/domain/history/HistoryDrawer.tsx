@@ -108,6 +108,15 @@ const HistoryItem = ({ sid, row }: { sid: string; row: HistoryRow }) => {
         </div>
       </div>
 
+      {row.ticketOpened && (
+        <div className="rounded-lg bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400 border border-amber-500/20 break-words leading-relaxed">
+          <span className="font-bold flex items-center gap-1 mb-1 text-amber-700 dark:text-amber-300">
+            ⚠️ Chamado Aberto
+          </span>
+          {row.ticketReason || "Sem motivo especificado pelo cliente."}
+        </div>
+      )}
+
       {row.summary && (
         <div className="rounded-lg bg-primary/5 p-3 text-xs text-muted-foreground border border-primary/10 break-words leading-relaxed">
           <span className="font-semibold text-primary block mb-1">Resumo do Atendimento:</span>

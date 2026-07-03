@@ -17,16 +17,18 @@ const (
 )
 
 type CallRecord struct {
-	SessionID string     `json:"sessionId"`
-	CallID    string     `json:"callId"`
-	Owner     *string    `json:"owner"`
-	Direction string     `json:"direction"`
-	Peer      string     `json:"peer"`
-	StartedAt int64      `json:"startedAt"`
-	Status    CallStatus `json:"status"`
-	EndedAt   *int64     `json:"endedAt,omitempty"`
-	EndReason string     `json:"endReason,omitempty"`
-	Summary   string     `json:"summary,omitempty"`
+	SessionID    string     `json:"sessionId"`
+	CallID       string     `json:"callId"`
+	Owner        *string    `json:"owner"`
+	Direction    string     `json:"direction"`
+	Peer         string     `json:"peer"`
+	StartedAt    int64      `json:"startedAt"`
+	Status       CallStatus `json:"status"`
+	EndedAt      *int64     `json:"endedAt,omitempty"`
+	EndReason    string     `json:"endReason,omitempty"`
+	Summary      string     `json:"summary,omitempty"`
+	TicketOpened bool       `json:"ticketOpened,omitempty"`
+	TicketReason string     `json:"ticketReason,omitempty"`
 }
 
 type AuthSnapshot struct {

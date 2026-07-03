@@ -148,11 +148,16 @@ func (g *GeminiLiveClient) buildTools() []map[string]any {
 				"description": "Termina a chamada de voz imediatamente e desliga o telefone do cliente.",
 				"parameters":  map[string]any{"type": "OBJECT", "properties": map[string]any{}},
 			})
-		case "human_transfer":
+		case "open_ticket":
 			decls = append(decls, map[string]any{
-				"name":        "human_transfer",
-				"description": "Transfere a chamada para um atendente humano imediatamente.",
-				"parameters":  map[string]any{"type": "OBJECT", "properties": map[string]any{}},
+				"name":        "open_ticket",
+				"description": "Abre um chamado de suporte ou contato para que um atendente humano retorne para o cliente por chat ou ligação.",
+				"parameters": map[string]any{
+					"type": "OBJECT",
+					"properties": map[string]any{
+						"reason": map[string]any{"type": "STRING", "description": "O motivo do chamado ou solicitação do cliente."},
+					},
+				},
 			})
 		case "send_message":
 			decls = append(decls, map[string]any{

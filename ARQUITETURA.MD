@@ -151,6 +151,10 @@ Ao final de uma chamada gerenciada pelo servidor:
 3. Envia o resumo formatado para o WhatsApp do administrador e do cliente (se configurado).
 4. Dispara webhooks HTTP externos com o payload contendo o ID da chamada, resumo, transcrição completa e metadados de duração.
 
+### 5.4 Abertura de Chamados (open_ticket) e Prompts Modulares
+* **Ferramenta `open_ticket`**: Substitui a antiga transferência síncrona para humano (`human_transfer`). Quando ativada pela IA, ela atualiza o registro da chamada no broker como `ticketOpened = true` e salva a razão do contato (`reason`). O backend notifica o administrador via WhatsApp (se configurado) e agenda o desligamento automático da chamada após 3 segundos (suficiente para a despedida).
+* **Prompts Modulares e Dinâmicos**: As instruções e regras de execução de cada ferramenta pré-definida (`hangup`, `open_ticket`, `send_message`, `schedule_call`) são configuradas separadamente (editáveis sob cada switch no painel) e salvas no campo `toolPrompts` da configuração. O backend Go (`ai_agent.go`) e o cliente React (`gemini-live.ts`) concatenam de forma automatizada estes prompts específicos ao prompt geral `systemInstruction` antes de iniciar a sessão Gemini Live.
+
 ---
 
 ## 6. Resiliência, Concorrência e Regras de Segurança

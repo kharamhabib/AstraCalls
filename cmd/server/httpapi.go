@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -13,7 +14,9 @@ import (
 	"wacalls/internal/voip/media"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/proto"
 )
 
 func (s *server) routes() http.Handler {
@@ -34,6 +37,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
 	mux.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
 	mux.HandleFunc("POST /api/sessions/{sid}/history/{callId}/summary", s.handleSaveCallSummary)
+	mux.HandleFunc("POST /api/sessions/{sid}/history/{callId}/ticket", s.handleOpenTicket)
 
 	// Mensageria (whatsmeow)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/text", s.handleSendText)
@@ -257,15 +261,17 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	rawRows := s.broker.historyRows(sess.id, 50)
 	
 	type ExtendedRow struct {
-		CallID    string `json:"callId"`
-		Peer      string `json:"peer"`
-		Phone     string `json:"phone"`
-		Name      string `json:"name,omitempty"`
-		Direction string `json:"direction"`
-		StartedAt int64  `json:"startedAt"`
-		EndedAt   *int64 `json:"endedAt,omitempty"`
-		EndReason string `json:"endReason,omitempty"`
-		Summary   string `json:"summary,omitempty"`
+		CallID       string `json:"callId"`
+		Peer         string `json:"peer"`
+		Phone        string `json:"phone"`
+		Name         string `json:"name,omitempty"`
+		Direction    string `json:"direction"`
+		StartedAt    int64  `json:"startedAt"`
+		EndedAt      *int64 `json:"endedAt,omitempty"`
+		EndReason    string `json:"endReason,omitempty"`
+		Summary      string `json:"summary,omitempty"`
+		TicketOpened bool   `json:"ticketOpened,omitempty"`
+		TicketReason string `json:"ticketReason,omitempty"`
 	}
 	
 	rows := make([]ExtendedRow, 0, len(rawRows))
@@ -294,15 +300,17 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}
 		
 		rows = append(rows, ExtendedRow{
-			CallID:    row.CallID,
-			Peer:      row.Peer,
-			Phone:     phone,
-			Name:      name,
-			Direction: row.Direction,
-			StartedAt: row.StartedAt,
-			EndedAt:   row.EndedAt,
-			EndReason: row.EndReason,
-			Summary:   row.Summary,
+			CallID:       row.CallID,
+			Peer:         row.Peer,
+			Phone:        phone,
+			Name:         name,
+			Direction:    row.Direction,
+			StartedAt:    row.StartedAt,
+			EndedAt:      row.EndedAt,
+			EndReason:    row.EndReason,
+			Summary:      row.Summary,
+			TicketOpened: row.TicketOpened,
+			TicketReason: row.TicketReason,
 		})
 	}
 	
@@ -325,6 +333,62 @@ func (s *server) handleSaveCallSummary(w http.ResponseWriter, r *http.Request) {
 	
 	s.broker.saveSummary(sess.id, callID, body.Summary)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "summary saved"})
+}
+
+func (s *server) handleOpenTicket(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	callID := r.PathValue("callId")
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	
+	rec, ok := s.broker.getCall(callID)
+	if ok {
+		rec.TicketOpened = true
+		rec.TicketReason = body.Reason
+		s.broker.upsertCall(*rec)
+	}
+
+	// Notifica via WhatsApp admin se configurado
+	config := sess.getAIConfig()
+	if config.PostCall.SendAdmin && config.PostCall.AdminNumber != "" {
+		go func() {
+			adminJid, err := resolveRecipient(config.PostCall.AdminNumber)
+			if err == nil {
+				peer := callID // fallback
+				if ok {
+					peer = rec.Peer
+				}
+				contactName := resolveContactPhoneRaw(context.Background(), sess, peer)
+				msg := fmt.Sprintf("⚠️ *Novo Chamado Aberto pela IA (Local)*\n\n• *Cliente:* %s\n• *Sessão:* %s\n• *Motivo:* %s\n• *ID Chamada:* %s", contactName, sess.name, body.Reason, callID)
+				_, _ = sess.client.SendMessage(context.Background(), adminJid, &waE2E.Message{
+					Conversation: proto.String(msg),
+				})
+			}
+		}()
+	}
+	
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ticket saved"})
+}
+
+func resolveContactPhoneRaw(ctx context.Context, sess *Session, peer string) string {
+	jid, err := types.ParseJID(peer)
+	if err != nil {
+		return peer
+	}
+	if jid.Server == "lid" && sess.client != nil && sess.client.Store.LIDs != nil {
+		if pn, e := sess.client.Store.LIDs.GetPNForLID(ctx, jid); e == nil && !pn.IsEmpty() {
+			return pn.User
+		}
+	}
+	return jid.User
 }
 
 func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Request) {
