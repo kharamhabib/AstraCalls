@@ -184,3 +184,24 @@ Para suportar chamadas simultâneas estáveis diretamente no servidor e evitar t
 * **Detecção de Desconexões SSE Mortas**: Goroutines de transmissão SSE monitoram o encerramento de conexão do navegador e encerram a escuta do canal imediatamente ao detectar erro de escrita (ping falho).
 * **Independência de Processo**: O rebranding visual de visualização para **RockCall** foi feito estritamente no frontend (React, HTML). Os pacotes Go, caminhos de importação internos e binários de compilação mantiveram os nomes originais (`wacalls`) para não quebrar referências do sistema de build nativo e das dependências CGO Opus.
 * **Persistência de Transcrições**: As falas do usuário e da IA são agrupadas na store do Zustand (`transcripts`) por tempo e por orador (se client-side), ou gravadas no banco de dados Postgres via transação SQL ao fim da chamada (se server-side).
+
+---
+
+## 7. Integração e Widget do Chatwoot
+
+O sistema conta com uma integração profissional para a plataforma de atendimento omnicanal **Chatwoot**, viabilizando chamadas de voz diretamente do console do atendente.
+
+### 7.1 Widget Flutuante (`widget.js`)
+O script injetado na interface do Chatwoot (`super_admin > app_config > internal`) insere um controle global de telefonia na tela do atendente:
+* **Bypass de WebRTC no Server-Side AI**: Quando uma ligação é efetuada ou atendida utilizando a IA no servidor (`isServerAI = true`), o widget pula a solicitação de microfone local e a criação de conexões WebRTC no navegador, aliviando o uso de processamento local.
+* **Transcrições Unificadas em Tempo Real**: Conecta ao fluxo SSE (`/api/events`) e exibe as falas da IA e do cliente de forma aglutinada e limpa na caixa `#wacalls-transcript`. Os blocos de áudio transmitidos em frações consecutivas pelo mesmo orador são acumulados na mesma linha.
+* **Resolução Dinâmica de Contatos**: Ao receber uma chamada de entrada, o widget busca o nome real do cliente e a foto do perfil via `/api/sessions/{sid}/contacts/{jid}` no backend em paralelo com a configuração da IA. A interface renderiza o pop-up de atendimento com o nome do cliente de forma reativa.
+* **Controle Inteligente de Ringtone**: O widget dispara o som de chamada recebida instantaneamente. Se a chamada for auto-atendida pela IA (`owner === "__server__"`), o som é interrompido e a tela transiciona de forma automática para "IA em chamada". Se outro operador atender a chamada, o som cessa e a tela flutuante é fechada automaticamente.
+
+### 7.2 Resolução de Contexto de Chat no Backend (Go)
+Para alimentar a IA com o histórico recente de conversas por texto do Chatwoot e evitar que o operador precise estar com a aba certa aberta, o fluxo foi movido inteiramente para o backend Go (`chatwoot.go` e `ai_agent.go`):
+1. **Desacoplamento do DOM**: O widget JavaScript não faz mais nenhuma leitura de mensagens no DOM do navegador, blindando o sistema contra quebras devido a atualizações de layout do Chatwoot.
+2. **Busca Robusta via API**: Ao instanciar o agente de IA (`NewServerAIAgent`), o servidor Go obtém o telefone do contato (resolvendo JID LID -> PN se necessário).
+3. **Resolução de Conversa e Mensagens**: O Go realiza chamadas autenticadas na API do Chatwoot buscando o contato pelo telefone, localiza a conversa ativa aberta ou pendente associada e extrai as últimas 10 mensagens (via `GET /conversations/{id}/messages`).
+4. **Alimentação do Gemini**: As mensagens são ordenadas cronologicamente, formatadas e acopladas à diretiva de sistema (`SystemInstruction`) da IA. Desse modo, o agente do Gemini Live atende ou inicia a ligação sabendo exatamente o que foi conversado no chat por texto anteriormente.
+

@@ -727,6 +727,7 @@ func (s *Session) fetchChatwootContext(phone string) string {
 
 	// 1. Procura o contato pelo telefone
 	var contactID int
+	var contactName string
 	res, code, err := cfg.req(http.MethodGet, "/contacts/search?q="+phone, nil)
 	if err != nil || code != 200 {
 		s.log.Warn("chatwoot fetch context: contact search failed", "phone", phone, "code", code, "err", err)
@@ -740,6 +741,7 @@ func (s *Session) fetchChatwootContext(phone string) string {
 		m := asMap(it)
 		if id := asInt(m["id"]); id != 0 {
 			contactID = id
+			contactName = asStr(m["name"])
 			break
 		}
 	}
@@ -747,7 +749,7 @@ func (s *Session) fetchChatwootContext(phone string) string {
 		return ""
 	}
 
-	// 2. Procura a conversa ativa
+	// 2. Procura a conversa mais recente (independente do status)
 	var convID int
 	cRes, cCode, cErr := cfg.req(http.MethodGet, fmt.Sprintf("/contacts/%d/conversations", contactID), nil)
 	if cErr != nil || cCode != 200 {
@@ -758,11 +760,8 @@ func (s *Session) fetchChatwootContext(phone string) string {
 	for _, it := range cList {
 		m := asMap(it)
 		if asInt(m["inbox_id"]) == cfg.InboxID {
-			st := asStr(m["status"])
-			if st == "open" || st == "pending" || st == "snoozed" {
-				convID = asInt(m["id"])
-				break
-			}
+			convID = asInt(m["id"])
+			break // O primeiro da lista é o mais recente
 		}
 	}
 	if convID == 0 {
@@ -776,14 +775,26 @@ func (s *Session) fetchChatwootContext(phone string) string {
 		return ""
 	}
 
-	// Limita às últimas 10 mensagens
-	if len(mList) > 10 {
-		mList = mList[len(mList)-10:]
+	// Chatwoot retorna as mensagens do mais recente para o mais antigo.
+	// Pegamos as 10 mais recentes e invertemos a ordem para ficar cronológico para a IA.
+	limit := 10
+	if len(mList) < limit {
+		limit = len(mList)
+	}
+	latestMsgs := mList[:limit]
+	for i, j := 0, len(latestMsgs)-1; i < j; i, j = i+1, j-1 {
+		latestMsgs[i], latestMsgs[j] = latestMsgs[j], latestMsgs[i]
 	}
 
 	var promptLines []string
-	promptLines = append(promptLines, "CONTEXTO DA CONVERSA ANTERIOR NO CHATWOOT:")
-	for _, it := range mList {
+	if contactName != "" {
+		promptLines = append(promptLines, "NOME DO CLIENTE: "+contactName)
+	}
+	promptLines = append(promptLines, "TELEFONE DO CLIENTE: "+phone)
+	promptLines = append(promptLines, "\nCONTEXTO DA CONVERSA ANTERIOR NO CHATWOOT:")
+	
+	msgCount := 0
+	for _, it := range latestMsgs {
 		m := asMap(it)
 		content := strings.TrimSpace(asStr(m["content"]))
 		if content == "" {
@@ -798,10 +809,12 @@ func (s *Session) fetchChatwootContext(phone string) string {
 			senderName = "Atendente (Você)"
 		}
 		promptLines = append(promptLines, fmt.Sprintf("- %s: %s", senderName, content))
+		msgCount++
 	}
 	
-	if len(promptLines) <= 1 {
-		return "" // Sem conteúdo útil
+	if msgCount == 0 {
+		// Se não tem mensagens, ainda assim retorna o nome e telefone do cliente
+		return strings.Join(promptLines[:2], "\n")
 	}
 
 	promptLines = append(promptLines, "\nUse este histórico para saber o que já foi conversado e evitar repetir perguntas.")
