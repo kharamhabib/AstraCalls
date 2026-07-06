@@ -24,6 +24,10 @@
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/></svg>';
   var ICON_WARN =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+  var ICON_SPARKLES =
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="m5 3 1 2.5L8.5 6 6 7 5 9.5 4 7 1.5 6 4 5.5Z"/><path d="m19 17 1 2.5 2.5.5-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1Z"/></svg>';
+  var ICON_SPARKLES_SMALL =
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:#d97706;"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>';
 
   function api(path, opts) {
     opts = opts || {};
@@ -68,7 +72,7 @@
   document.head.appendChild(style);
 
   // ---------- estado ----------
-  var call = null; // {pc, mic, callId, session, t0, timer}
+  var call = null; // {pc, mic, callId, session, t0, timer, answered, isServerAI}
   var incoming = null; // chamada recebida pendente {sessionId, callId, peer}
   var globalES = null; // SSE persistente p/ detectar chamadas recebidas
   var ringCtx = null, ringTimer = null;
@@ -145,30 +149,49 @@
         '<div class="cw-b"><div class="cw-name">' + esc(state.name) + "</div>" +
         '<div class="cw-sub">' + esc(state.phone) + "</div>" +
         '<div class="cw-st" id="wacalls-st">' + (state.status || "") + "</div>" +
-        '<div class="cw-row"><button class="cw-act cw-mute" id="wacalls-mute" title="Mudo">' + ICON_MIC + "</button>" +
+        '<div id="wacalls-transcript" style="margin-top:12px; max-height:100px; overflow-y:auto; font-size:12px; text-align:left; border:1px solid #eceef0; border-radius:8px; padding:8px; background:#f8f9fa; color:#4f565b; display:none; flex-direction:column; gap:6px; font-family:inherit;"></div>' +
+        '<div class="cw-row" style="margin-top:14px;">' +
+        (state.isServerAI
+          ? '<div style="display:inline-flex; align-items:center; justify-content:center; gap:6px; font-size:12px; font-weight:600; color:#d97706; background:#fef3c7; padding:6px 12px; border-radius:20px; border:1px solid #fde68a;">' + ICON_SPARKLES_SMALL + " IA no Servidor</div>"
+          : '<button class="cw-act cw-mute" id="wacalls-mute" title="Mudo">' + ICON_MIC + "</button>") +
         '<button class="cw-act cw-hang" id="wacalls-hang" title="Encerrar">' + ICON_PHONE_OFF + "</button></div>" +
-        '<audio id="wacalls-audio" autoplay></audio></div>';
+        (state.isServerAI ? "" : '<audio id="wacalls-audio" autoplay playsinline style="display: block; width: 0; height: 0; opacity: 0; pointer-events: none;"></audio>') +
+        "</div>";
     } else if (state.incoming) {
       body =
         '<div class="cw-b"><div class="cw-name">Chamada recebida</div>' +
         '<div class="cw-sub">' + esc(state.phone) + "</div>" +
         '<div class="cw-st" id="wacalls-st">Tocando…</div>' +
-        '<div class="cw-row"><button class="cw-act cw-call" id="wacalls-answer" title="Atender">' + ICON_PHONE + "</button>" +
+        '<div class="cw-row" style="margin-top:18px;">' +
+        '<button class="cw-act cw-call" id="wacalls-answer" title="Atender">' + ICON_PHONE + "</button>" +
+        (state.hasAI
+          ? '<button class="cw-act cw-ai-answer" id="wacalls-ai-answer" title="Atender com IA" style="background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 4px 12px rgba(217,119,6,.32);">' + ICON_SPARKLES + "</button>"
+          : "") +
         '<button class="cw-act cw-hang" id="wacalls-reject" title="Recusar">' + ICON_PHONE_OFF + "</button></div>" +
-        '<audio id="wacalls-audio" autoplay></audio></div>';
+        '<audio id="wacalls-audio" autoplay playsinline style="display: block; width: 0; height: 0; opacity: 0; pointer-events: none;"></audio></div>';
     } else {
       body =
         '<div class="cw-b"><div class="cw-name">' + esc(state.name) + "</div>" +
         '<div class="cw-sub">' + esc(state.phone) + "</div>" +
-        '<button class="cw-act cw-call" id="wacalls-start" title="Ligar">' + ICON_PHONE + "</button></div>";
+        '<div class="cw-row" style="margin-top:18px;">' +
+        '<button class="cw-act cw-call" id="wacalls-start" title="Ligar">' + ICON_PHONE + "</button>" +
+        (state.hasAI
+          ? '<button class="cw-act cw-ai-start" id="wacalls-ai-start" title="Ligar com IA" style="background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 4px 12px rgba(217,119,6,.32);">' + ICON_SPARKLES + "</button>"
+          : "") +
+        "</div></div>";
     }
     p.innerHTML = head + body;
     p.querySelector("#wacalls-close").onclick = closePanel;
     if (p.querySelector("#wacalls-start"))
       p.querySelector("#wacalls-start").onclick = function () {
-        startCall(state);
+        startCall(state, false);
       };
-    if (p.querySelector("#wacalls-answer")) p.querySelector("#wacalls-answer").onclick = acceptIncoming;
+    if (p.querySelector("#wacalls-ai-start"))
+      p.querySelector("#wacalls-ai-start").onclick = function () {
+        startCall(state, true);
+      };
+    if (p.querySelector("#wacalls-answer")) p.querySelector("#wacalls-answer").onclick = function () { acceptIncoming(false); };
+    if (p.querySelector("#wacalls-ai-answer")) p.querySelector("#wacalls-ai-answer").onclick = function () { acceptIncoming(true); };
     if (p.querySelector("#wacalls-reject")) p.querySelector("#wacalls-reject").onclick = rejectIncoming;
     if (p.querySelector("#wacalls-hang")) p.querySelector("#wacalls-hang").onclick = hangup;
     if (p.querySelector("#wacalls-mute"))
@@ -188,6 +211,19 @@
     if (s) s.textContent = t;
   }
 
+  function addTranscript(speaker, text) {
+    var tBox = document.getElementById("wacalls-transcript");
+    if (!tBox) return;
+    tBox.style.display = "flex";
+    var line = el("div");
+    line.style.marginBottom = "4px";
+    var label = speaker === "ai" ? "IA" : "Cliente";
+    var color = speaker === "ai" ? "#d97706" : "#2781F6";
+    line.innerHTML = '<strong style="color:' + color + '">' + label + ':</strong> ' + esc(text);
+    tBox.appendChild(line);
+    tBox.scrollTop = tBox.scrollHeight;
+  }
+
   function iceComplete(pc) {
     return new Promise(function (res) {
       if (pc.iceGatheringState === "complete") return res();
@@ -197,55 +233,74 @@
     });
   }
 
-  async function startCall(state) {
-    render({ inCall: true, name: state.name, phone: state.phone, status: "Conectando…" });
+  async function startCall(state, isAI) {
+    var isServerAI = isAI && state.serverSideAI;
+    render({ inCall: true, name: state.name, phone: state.phone, status: isServerAI ? "IA conectando…" : "Conectando…", isServerAI: isServerAI });
     try {
-      var mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-      var pc = new RTCPeerConnection({ iceServers: [] });
-      mic.getAudioTracks().forEach(function (t) {
-        pc.addTrack(t, mic);
-      });
-      pc.addTransceiver("audio", { direction: "recvonly" });
-      pc.ontrack = function (ev) {
-        var a = document.getElementById("wacalls-audio");
-        if (a && ev.streams[0]) {
-          a.srcObject = ev.streams[0];
-          a.play().catch(function () {});
-        }
-      };
+      var pc = null;
+      var mic = null;
+
+      if (!isServerAI) {
+        mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        pc = new RTCPeerConnection({ iceServers: [] });
+        mic.getAudioTracks().forEach(function (t) {
+          pc.addTrack(t, mic);
+        });
+        pc.addTransceiver("audio", { direction: "recvonly" });
+        pc.ontrack = function (ev) {
+          var a = document.getElementById("wacalls-audio");
+          if (a) {
+            var stream = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
+            a.srcObject = stream;
+            a.play().catch(function (err) {
+              console.error("[wacalls-widget] erro ao reproduzir audio:", err);
+            });
+          }
+        };
+      }
+
       var r = await api("/api/sessions/" + state.session + "/calls", {
         method: "POST",
-        body: { phone: state.phone, duration_ms: 300000, record: false },
+        body: { phone: state.phone, duration_ms: 300000, record: false, ai: isAI },
       });
       var callId = r.call.callId;
-      var offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      await iceComplete(pc);
-      var ans = await api("/api/sessions/" + state.session + "/calls/" + callId + "/webrtc", {
-        method: "POST",
-        body: { sdp_offer: pc.localDescription.sdp },
-      });
-      await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp_answer });
-      call = { pc: pc, mic: mic, callId: callId, session: state.session, t0: null, timer: null, es: null, answered: false };
-      setStatus("Chamando…");
-      pc.onconnectionstatechange = function () {
-        // NÃO usar a conexão do navegador como "atendida" — ela conecta na hora
-        // (navegador↔servidor), antes de o destinatário atender.
-        if (pc.connectionState === "failed") setStatus("Falha na conexão");
+
+      if (!isServerAI && pc) {
+        var offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await iceComplete(pc);
+        var ans = await api("/api/sessions/" + state.session + "/calls/" + callId + "/webrtc", {
+          method: "POST",
+          body: { sdp_offer: pc.localDescription.sdp },
+        });
+        await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp_answer });
+      }
+
+      call = {
+        pc: pc,
+        mic: mic,
+        callId: callId,
+        session: state.session,
+        t0: null,
+        timer: null,
+        es: null,
+        answered: false,
+        isServerAI: isServerAI
       };
-      // O tempo só começa quando o DESTINATÁRIO atende. O sinal real vem do
-      // backend via SSE global (call-status "connected" = atendeu).
+
+      setStatus(isServerAI ? "Chamando com IA…" : "Chamando…");
+
+      if (!isServerAI && pc) {
+        pc.onconnectionstatechange = function () {
+          if (pc.connectionState === "failed") setStatus("Falha na conexão");
+        };
+      }
       connectEvents();
     } catch (e) {
       setStatus("Erro: " + (e.message || e));
     }
   }
 
-  // Acompanha o estado real da chamada pelo SSE do backend. Só quando o
-  // destinatário ATENDE (status "connected") é que começa o cronômetro e
-  // aparece "Em chamada"; enquanto isso mostra "Chamando…".
-  // SSE persistente: acompanha o estado da chamada ativa E detecta chamadas
-  // recebidas (evento "incoming") pra abrir o widget no Chatwoot e tocar.
   function connectEvents() {
     if (!BASE || globalES) return;
     try {
@@ -256,30 +311,45 @@
         try { msg = JSON.parse(ev.data); } catch (e) { return; }
         handleEvent(msg);
       };
-      globalES.onerror = function () {}; // EventSource reconecta sozinho
+      globalES.onerror = function () {}; 
     } catch (e) {}
   }
 
   function handleEvent(msg) {
-    // chamada ativa (saída, ou entrada já aceita): controla cronômetro/fim
     if (call && msg.id === call.callId) {
       if (msg.type === "call-ended" || msg.status === "ended") hangup();
       else if (msg.type === "call-status") {
         if (msg.status === "connected") markAnswered();
-        else if (!call.answered) setStatus("Chamando…");
+        else if (!call.answered) setStatus(call.isServerAI ? "Chamando com IA…" : "Chamando…");
+      }
+      else if (msg.type === "ai-transcript") {
+        addTranscript(msg.speaker, msg.text);
       }
       return;
     }
-    // chamada RECEBIDA chegando → abre o widget e toca
     if (msg.type === "incoming") {
-      if (call) return; // já em chamada
-      if (incoming && incoming.callId === msg.id) return; // já tocando esta chamada
+      if (call) return;
+      if (incoming && incoming.callId === msg.id) return;
       incoming = { sessionId: msg.sessionId, callId: msg.id, peer: msg.peer || "" };
-      render({ incoming: true, phone: incoming.peer });
-      playRing();
+      
+      api("/api/sessions/" + msg.sessionId + "/ai-config")
+        .then(function (aiRes) {
+          var hasAI = aiRes && aiRes.enabled && aiRes.aiConfig && aiRes.aiConfig.serverSideAI;
+          if (!resolved) {
+            resolved = { session: msg.sessionId, phone: msg.peer, name: msg.peer, hasAI: hasAI, serverSideAI: hasAI };
+          } else {
+            resolved.hasAI = hasAI;
+            resolved.serverSideAI = hasAI;
+          }
+          render({ incoming: true, phone: incoming.peer, hasAI: hasAI });
+          playRing();
+        })
+        .catch(function () {
+          render({ incoming: true, phone: incoming.peer, hasAI: false });
+          playRing();
+        });
       return;
     }
-    // a recebida pendente encerrou antes de atender (desistiu)
     if (incoming && msg.id === incoming.callId && (msg.type === "call-ended" || msg.status === "ended")) {
       incoming = null;
       stopRing();
@@ -288,29 +358,59 @@
     }
   }
 
-  async function acceptIncoming() {
+  async function acceptIncoming(isAI) {
     var inc = incoming;
     if (!inc) return;
     incoming = null;
     stopRing();
-    render({ inCall: true, name: "Chamada recebida", phone: inc.peer, status: "Conectando…" });
+    var isServerAI = isAI && resolved && resolved.serverSideAI;
+    render({ inCall: true, name: "Chamada recebida", phone: inc.peer, status: isServerAI ? "IA conectando…" : "Conectando…", isServerAI: isServerAI });
     try {
-      await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/accept", { method: "POST", body: {} });
-      var mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-      var pc = new RTCPeerConnection({ iceServers: [] });
-      mic.getAudioTracks().forEach(function (t) { pc.addTrack(t, mic); });
-      pc.addTransceiver("audio", { direction: "recvonly" });
-      pc.ontrack = function (ev) {
-        var a = document.getElementById("wacalls-audio");
-        if (a && ev.streams[0]) { a.srcObject = ev.streams[0]; a.play().catch(function () {}); }
+      await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/accept", {
+        method: "POST",
+        body: { ai: isAI },
+      });
+
+      var pc = null;
+      var mic = null;
+
+      if (!isServerAI) {
+        mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        pc = new RTCPeerConnection({ iceServers: [] });
+        mic.getAudioTracks().forEach(function (t) { pc.addTrack(t, mic); });
+        pc.addTransceiver("audio", { direction: "recvonly" });
+        pc.ontrack = function (ev) {
+          var a = document.getElementById("wacalls-audio");
+          if (a) {
+            var stream = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
+            a.srcObject = stream;
+            a.play().catch(function (err) {
+              console.error("[wacalls-widget] erro ao reproduzir audio:", err);
+            });
+          }
+        };
+        var offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await iceComplete(pc);
+        var ans = await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/webrtc", {
+          method: "POST",
+          body: { sdp_offer: pc.localDescription.sdp },
+        });
+        await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp_answer });
+      }
+
+      call = {
+        pc: pc,
+        mic: mic,
+        callId: inc.callId,
+        session: inc.sessionId,
+        t0: null,
+        timer: null,
+        es: null,
+        answered: false,
+        isServerAI: isServerAI
       };
-      var offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      await iceComplete(pc);
-      var ans = await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/webrtc", { method: "POST", body: { sdp_offer: pc.localDescription.sdp } });
-      await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp_answer });
-      call = { pc: pc, mic: mic, callId: inc.callId, session: inc.sessionId, t0: null, timer: null, es: null, answered: false };
-      markAnswered(); // nós atendemos → conta o tempo
+      markAnswered();
     } catch (e) {
       setStatus("Erro: " + (e.message || e));
       try { await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId, { method: "DELETE" }); } catch (_) {}
@@ -328,10 +428,10 @@
 
   function markAnswered() {
     if (!call || call.answered) return;
-    stopRing(); // garante que o apito de "tocando" pare ao atender
+    stopRing();
     call.answered = true;
     call.t0 = Date.now();
-    setStatus("Em chamada");
+    setStatus(call.isServerAI ? "IA em chamada" : "Em chamada");
     call.timer = setInterval(tick, 1000);
   }
 
@@ -351,7 +451,6 @@
     tracks.forEach(function (t) {
       t.enabled = !on;
     });
-    // on=true significa que estava ligado e agora fica mudo
     btn.innerHTML = on ? ICON_MIC_OFF : ICON_MIC;
     btn.classList.toggle("on", on);
     btn.title = on ? "Ativar microfone" : "Mudo";
@@ -364,24 +463,22 @@
     if (c.timer) clearInterval(c.timer);
     if (c.es) try { c.es.close(); } catch (e) {}
     api("/api/sessions/" + c.session + "/calls/" + c.callId, { method: "DELETE" }).catch(function () {});
-    try {
-      c.mic.getTracks().forEach(function (t) {
-        t.stop();
-      });
-    } catch (e) {}
-    try {
-      c.pc.close();
-    } catch (e) {}
+    if (!c.isServerAI) {
+      try {
+        c.mic.getTracks().forEach(function (t) {
+          t.stop();
+        });
+      } catch (e) {}
+      try {
+        c.pc.close();
+      } catch (e) {}
+    }
     closePanel();
   }
 
-  // ---------- vínculo empresa+caixa ----------
-  // O ícone só aparece quando a conversa aberta pertence a uma conta E caixa (inbox)
-  // que tem uma sessão WaCalls conectada. O backend (/chatwoot/resolve) é quem decide:
-  // ele descobre o inbox_id da conversa e só responde 200 se houver sessão amarrada.
-  var currentConvKey = null; // "acc/conv" da conversa atual
-  var callable = false; // a conversa atual é de uma caixa conectada?
-  var resolved = null; // cache {session, phone, name}
+  var currentConvKey = null; 
+  var callable = false; 
+  var resolved = null; 
 
   function convKey() {
     var acc = location.pathname.match(/accounts\/(\d+)/);
@@ -391,7 +488,7 @@
 
   function refreshBinding() {
     var key = convKey();
-    if (key === currentConvKey) return; // mesma conversa: nada a fazer
+    if (key === currentConvKey) return; 
     currentConvKey = key;
     callable = false;
     resolved = null;
@@ -401,10 +498,20 @@
     var parts = key.split("/");
     api("/api/chatwoot/resolve?account_id=" + parts[0] + "&conversation_id=" + parts[1])
       .then(function (info) {
-        if (convKey() !== key) return; // o agente já trocou de conversa
-        resolved = { session: info.session_id, phone: info.phone, name: info.name || info.phone };
+        if (convKey() !== key) return; 
+        resolved = { session: info.session_id, phone: info.phone, name: info.name || info.phone, hasAI: false, serverSideAI: false };
         callable = true;
-        ensureButton();
+        api("/api/sessions/" + info.session_id + "/ai-config")
+          .then(function (aiRes) {
+            if (aiRes && aiRes.enabled) {
+              resolved.hasAI = true;
+              resolved.serverSideAI = aiRes.aiConfig && aiRes.aiConfig.serverSideAI;
+            }
+            ensureButton();
+          })
+          .catch(function () {
+            ensureButton();
+          });
       })
       .catch(function () {
         if (convKey() !== key) return;
@@ -422,10 +529,9 @@
   function onCall() {
     console.log("[wacalls-widget] clique no botão de ligar");
     if (resolved) {
-      render({ session: resolved.session, phone: resolved.phone, name: resolved.name });
+      render({ session: resolved.session, phone: resolved.phone, name: resolved.name, hasAI: resolved.hasAI && resolved.serverSideAI, serverSideAI: resolved.serverSideAI });
       return;
     }
-    // Sem vínculo em cache: confirma ao vivo (o ícone pode ter sobrado por cache do Chatwoot).
     var key = convKey();
     if (!key) {
       render({ warn: "Abra uma conversa para ligar." });
@@ -435,9 +541,19 @@
     var parts = key.split("/");
     api("/api/chatwoot/resolve?account_id=" + parts[0] + "&conversation_id=" + parts[1])
       .then(function (info) {
-        resolved = { session: info.session_id, phone: info.phone, name: info.name || info.phone };
+        resolved = { session: info.session_id, phone: info.phone, name: info.name || info.phone, hasAI: false, serverSideAI: false };
         callable = true;
-        render({ session: resolved.session, phone: resolved.phone, name: resolved.name });
+        api("/api/sessions/" + info.session_id + "/ai-config")
+          .then(function (aiRes) {
+            if (aiRes && aiRes.enabled) {
+              resolved.hasAI = true;
+              resolved.serverSideAI = aiRes.aiConfig && aiRes.aiConfig.serverSideAI;
+            }
+            render({ session: resolved.session, phone: resolved.phone, name: resolved.name, hasAI: resolved.hasAI && resolved.serverSideAI, serverSideAI: resolved.serverSideAI });
+          })
+          .catch(function () {
+            render({ session: resolved.session, phone: resolved.phone, name: resolved.name, hasAI: false, serverSideAI: false });
+          });
       })
       .catch(function () {
         callable = false;
@@ -445,8 +561,6 @@
       });
   }
 
-  // ---------- injeção do ícone (container de ações do header da conversa) ----------
-  // Técnica: acha botões quadrados (~32px) no lado direito, cujo pai tem 2-6 botões
   // (= barra de ações do ticket). Fallback pelo texto "Ações da conversa".
   function findActionsContainer() {
     if (ANCHOR) {
