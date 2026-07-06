@@ -248,71 +248,6 @@
     });
   }
 
-  function getChatwootContext() {
-    try {
-      var messages = [];
-      var els = document.querySelectorAll(".linkified, .message-text");
-      
-      if (els.length === 0) {
-        els = document.querySelectorAll(".message-content, .rich-text");
-      }
-      
-      for (var i = 0; i < els.length; i++) {
-        var el = els[i];
-        var text = el.textContent || el.innerText || "";
-        text = text.trim();
-        if (!text) continue;
-        
-        var isOutgoing = false;
-        var p = el;
-        var depth = 0;
-        while (p && depth < 8) {
-          var cls = p.className || "";
-          if (typeof cls === "string") {
-            if (cls.indexOf("justify-end") > -1 || cls.indexOf("outgoing") > -1 || cls.indexOf("is-agent") > -1 || cls.indexOf("current-user") > -1 || cls.indexOf("flex-row-reverse") > -1) {
-              isOutgoing = true;
-              break;
-            }
-          }
-          p = p.parentElement;
-          depth++;
-        }
-        
-        messages.push({
-          sender: isOutgoing ? "agent" : "customer",
-          text: text
-        });
-      }
-      return messages.slice(-10);
-    } catch (e) {
-      console.error("[wacalls-widget] erro ao ler contexto:", e);
-      return [];
-    }
-  }
-
-  function buildChatwootPrompt(contactName, contactPhone) {
-    var promptLines = [];
-    if (contactName) {
-      promptLines.push("NOME DO CLIENTE: " + contactName);
-    }
-    if (contactPhone) {
-      promptLines.push("TELEFONE DO CLIENTE: " + contactPhone);
-    }
-    
-    var messages = getChatwootContext();
-    if (messages.length > 0) {
-      promptLines.push("\nCONTEXTO DA CONVERSA ANTERIOR NO CHATWOOT:");
-      for (var i = 0; i < messages.length; i++) {
-        var msg = messages[i];
-        var senderName = msg.sender === "agent" ? "Atendente (Você)" : (contactName || "Cliente");
-        promptLines.push("- " + senderName + ": " + msg.text);
-      }
-      promptLines.push("\nUse este histórico para saber o que já foi conversado e evitar repetir perguntas.");
-    }
-    
-    return promptLines.join("\n");
-  }
-
   async function startCall(state, isAI) {
     var isServerAI = isAI && state.serverSideAI;
     render({ inCall: true, name: state.name, phone: state.phone, status: isServerAI ? "IA conectando…" : "Conectando…", isServerAI: isServerAI });
@@ -339,10 +274,9 @@
         };
       }
 
-      var prompt = isAI ? buildChatwootPrompt(state.name, state.phone) : "";
       var r = await api("/api/sessions/" + state.session + "/calls", {
         method: "POST",
-        body: { phone: state.phone, duration_ms: 300000, record: false, ai: isAI, prompt: prompt },
+        body: { phone: state.phone, duration_ms: 300000, record: false, ai: isAI },
       });
       var callId = r.call.callId;
 
@@ -501,10 +435,9 @@
     var isServerAI = isAI && resolved && resolved.serverSideAI;
     render({ inCall: true, name: resolved ? resolved.name : "Chamada recebida", phone: resolved ? resolved.phone : inc.peer, status: isServerAI ? "IA conectando…" : "Conectando…", isServerAI: isServerAI });
     try {
-      var prompt = isAI ? buildChatwootPrompt(resolved ? resolved.name : "", resolved ? resolved.phone : inc.peer) : "";
       await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/accept", {
         method: "POST",
-        body: { ai: isAI, prompt: prompt },
+        body: { ai: isAI },
       });
 
       var pc = null;
