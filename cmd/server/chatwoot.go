@@ -718,11 +718,46 @@ func (c ChatwootConfig) reqList(method, path string) ([]any, int, error) {
 	return nil, resp.StatusCode, fmt.Errorf("failed to parse chatwoot list response")
 }
 
+// parseChatwootTime converte o valor de tempo do Chatwoot em time.Time.
+func parseChatwootTime(val any) time.Time {
+	if val == nil {
+		return time.Time{}
+	}
+	switch v := val.(type) {
+	case float64:
+		if v > 1e11 {
+			return time.UnixMilli(int64(v))
+		}
+		return time.Unix(int64(v), 0)
+	case string:
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			return t
+		}
+		if t, err := time.Parse("2006-01-02T15:04:05.000Z", v); err == nil {
+			return t
+		}
+		if t, err := time.Parse("2006-01-02 15:04:05 MST", v); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
 // fetchChatwootContext busca o histórico de conversas no Chatwoot de forma robusta a partir do telefone
 func (s *Session) fetchChatwootContext(phone string) string {
 	cfg := s.getChatwoot()
 	if !cfg.valid() {
 		return ""
+	}
+
+	// Carrega o fuso horário configurado
+	tzEnv := os.Getenv("TZ")
+	if tzEnv == "" {
+		tzEnv = "America/Sao_Paulo"
+	}
+	loc, err := time.LoadLocation(tzEnv)
+	if err != nil {
+		loc = time.UTC
 	}
 
 	// 1. Procura o contato pelo telefone
@@ -791,6 +826,9 @@ func (s *Session) fetchChatwootContext(phone string) string {
 		promptLines = append(promptLines, "NOME DO CLIENTE: "+contactName)
 	}
 	promptLines = append(promptLines, "TELEFONE DO CLIENTE: "+phone)
+	
+	now := time.Now().In(loc)
+	promptLines = append(promptLines, "HORÁRIO ATUAL DA LIGAÇÃO: "+now.Format("02/01/2006 15:04"))
 	promptLines = append(promptLines, "\nCONTEXTO DA CONVERSA ANTERIOR NO CHATWOOT:")
 	
 	msgCount := 0
@@ -804,19 +842,30 @@ func (s *Session) fetchChatwootContext(phone string) string {
 		if p, ok := m["private"].(bool); ok && p {
 			continue
 		}
+		
+		t := parseChatwootTime(m["created_at"])
+		var timeStr string
+		if !t.IsZero() {
+			timeStr = " (" + t.In(loc).Format("02/01 15:04") + ")"
+		}
+
 		senderName := "Cliente"
 		if asStr(m["message_type"]) == "outgoing" {
 			senderName = "Atendente (Você)"
 		}
-		promptLines = append(promptLines, fmt.Sprintf("- %s: %s", senderName, content))
+		promptLines = append(promptLines, fmt.Sprintf("-%s %s: %s", timeStr, senderName, content))
 		msgCount++
 	}
 	
 	if msgCount == 0 {
-		// Se não tem mensagens, ainda assim retorna o nome e telefone do cliente
-		return strings.Join(promptLines[:2], "\n")
+		// Se não tem mensagens, ainda assim retorna o nome, telefone do cliente e horário
+		return strings.Join(promptLines[:3], "\n")
 	}
 
-	promptLines = append(promptLines, "\nUse este histórico para saber o que já foi conversado e evitar repetir perguntas.")
+	promptLines = append(promptLines, "\nINSTRUÇÕES PARA O HISTÓRICO DE CHATWOOT:")
+	promptLines = append(promptLines, "* Compare o horário de envio de cada mensagem com o HORÁRIO ATUAL DA LIGAÇÃO.")
+	promptLines = append(promptLines, "* Se as mensagens foram enviadas hoje e há poucos minutos, trate como assunto recente.")
+	promptLines = append(promptLines, "* Se as mensagens são de dias anteriores ou foram enviadas há muitas horas, NÃO inicie a conversa retomando esse assunto diretamente como se estivesse respondendo no chat na hora. Apenas cumprimente o cliente e pergunte como pode ajudá-lo hoje, evitando assuntos passados frios.")
+	
 	return strings.Join(promptLines, "\n")
 }
