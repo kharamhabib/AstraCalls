@@ -233,6 +233,59 @@
     });
   }
 
+  function getChatwootContext() {
+    try {
+      var messages = [];
+      var els = document.querySelectorAll(".message-content, .chat-bubble, .bubble");
+      if (els.length === 0) {
+        els = document.querySelectorAll(".message-text, .linkified");
+      }
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        var text = el.textContent || el.innerText || "";
+        text = text.trim();
+        if (!text) continue;
+        
+        var isOutgoing = false;
+        var p = el;
+        var depth = 0;
+        while (p && depth < 5) {
+          var cls = p.className || "";
+          if (typeof cls === "string") {
+            if (cls.indexOf("justify-end") > -1 || cls.indexOf("outgoing") > -1 || cls.indexOf("is-agent") > -1 || cls.indexOf("current-user") > -1) {
+              isOutgoing = true;
+              break;
+            }
+          }
+          p = p.parentElement;
+          depth++;
+        }
+        
+        messages.push({
+          sender: isOutgoing ? "agent" : "customer",
+          text: text
+        });
+      }
+      return messages.slice(-10);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function buildChatwootPrompt() {
+    var messages = getChatwootContext();
+    if (messages.length === 0) return "";
+    
+    var promptLines = ["CONTEXTO DA CONVERSA ANTERIOR NO CHATWOOT:"];
+    for (var i = 0; i < messages.length; i++) {
+      var msg = messages[i];
+      var senderName = msg.sender === "agent" ? "Atendente (Você)" : "Cliente";
+      promptLines.push("- " + senderName + ": " + msg.text);
+    }
+    promptLines.push("\nUse este histórico para contextualizar o início da ligação e evitar repetir perguntas que já foram respondidas pelo cliente no chat.");
+    return promptLines.join("\n");
+  }
+
   async function startCall(state, isAI) {
     var isServerAI = isAI && state.serverSideAI;
     render({ inCall: true, name: state.name, phone: state.phone, status: isServerAI ? "IA conectando…" : "Conectando…", isServerAI: isServerAI });
@@ -259,9 +312,10 @@
         };
       }
 
+      var prompt = isAI ? buildChatwootPrompt() : "";
       var r = await api("/api/sessions/" + state.session + "/calls", {
         method: "POST",
-        body: { phone: state.phone, duration_ms: 300000, record: false, ai: isAI },
+        body: { phone: state.phone, duration_ms: 300000, record: false, ai: isAI, prompt: prompt },
       });
       var callId = r.call.callId;
 
@@ -327,34 +381,84 @@
       }
       return;
     }
+
+    // chamada RECEBIDA pendente que foi atendida pela IA do servidor ou outro operador
+    if (incoming && msg.id === incoming.callId) {
+      if (msg.type === "incoming-claimed" || msg.type === "call-status") {
+        var owner = msg.owner;
+        var isConnected = msg.status === "connected" || (msg.type === "incoming-claimed" && owner);
+        
+        if (isConnected) {
+          if (owner === "__server__") {
+            // Atendido pela IA do servidor: para de tocar e mostra a chamada ativa da IA no painel
+            var inc = incoming;
+            incoming = null;
+            stopRing();
+            render({ inCall: true, name: resolved ? resolved.name : "IA no Servidor", phone: inc.peer.split("@")[0], status: "IA em chamada", isServerAI: true });
+            call = {
+              pc: null,
+              mic: null,
+              callId: inc.callId,
+              session: inc.sessionId,
+              t0: Date.now(),
+              timer: null,
+              es: null,
+              answered: true,
+              isServerAI: true
+            };
+            call.timer = setInterval(tick, 1000);
+          } else {
+            // Atendido por outro operador humano: fecha o painel e para de tocar
+            incoming = null;
+            stopRing();
+            var p = document.getElementById("wacalls-panel");
+            if (p) p.remove();
+          }
+          return;
+        }
+      }
+
+      if (msg.type === "call-ended" || msg.status === "ended") {
+        incoming = null;
+        stopRing();
+        var p = document.getElementById("wacalls-panel");
+        if (p) p.remove();
+        return;
+      }
+    }
+
     if (msg.type === "incoming") {
       if (call) return;
       if (incoming && incoming.callId === msg.id) return;
       incoming = { sessionId: msg.sessionId, callId: msg.id, peer: msg.peer || "" };
       
-      api("/api/sessions/" + msg.sessionId + "/ai-config")
-        .then(function (aiRes) {
-          var hasAI = aiRes && aiRes.enabled && aiRes.aiConfig && aiRes.aiConfig.serverSideAI;
-          if (!resolved) {
-            resolved = { session: msg.sessionId, phone: msg.peer, name: msg.peer, hasAI: hasAI, serverSideAI: hasAI };
-          } else {
-            resolved.hasAI = hasAI;
-            resolved.serverSideAI = hasAI;
-          }
-          render({ incoming: true, phone: incoming.peer, hasAI: hasAI });
-          playRing();
-        })
-        .catch(function () {
-          render({ incoming: true, phone: incoming.peer, hasAI: false });
-          playRing();
-        });
+      // Busca as informações do contato (nome) e a config da IA em paralelo
+      Promise.all([
+        api("/api/sessions/" + msg.sessionId + "/contacts/" + encodeURIComponent(msg.peer)).catch(function() { return null; }),
+        api("/api/sessions/" + msg.sessionId + "/ai-config").catch(function() { return null; })
+      ]).then(function(results) {
+        var contactInfo = results[0];
+        var aiRes = results[1];
+        
+        var contactName = (contactInfo && contactInfo.name) || msg.peer;
+        if (contactName.indexOf("@") > -1) {
+          contactName = contactName.split("@")[0];
+        }
+        
+        var hasAI = aiRes && aiRes.enabled && aiRes.aiConfig && aiRes.aiConfig.serverSideAI;
+        
+        resolved = {
+          session: msg.sessionId,
+          phone: (contactInfo && contactInfo.phone) || msg.peer.split("@")[0],
+          name: contactName,
+          hasAI: hasAI,
+          serverSideAI: hasAI
+        };
+        
+        render({ incoming: true, name: contactName, phone: resolved.phone, hasAI: hasAI });
+        playRing();
+      });
       return;
-    }
-    if (incoming && msg.id === incoming.callId && (msg.type === "call-ended" || msg.status === "ended")) {
-      incoming = null;
-      stopRing();
-      var p = document.getElementById("wacalls-panel");
-      if (p) p.remove();
     }
   }
 
@@ -364,11 +468,12 @@
     incoming = null;
     stopRing();
     var isServerAI = isAI && resolved && resolved.serverSideAI;
-    render({ inCall: true, name: "Chamada recebida", phone: inc.peer, status: isServerAI ? "IA conectando…" : "Conectando…", isServerAI: isServerAI });
+    render({ inCall: true, name: resolved ? resolved.name : "Chamada recebida", phone: resolved ? resolved.phone : inc.peer, status: isServerAI ? "IA conectando…" : "Conectando…", isServerAI: isServerAI });
     try {
+      var prompt = isAI ? buildChatwootPrompt() : "";
       await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/accept", {
         method: "POST",
-        body: { ai: isAI },
+        body: { ai: isAI, prompt: prompt },
       });
 
       var pc = null;

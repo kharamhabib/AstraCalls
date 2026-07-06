@@ -559,7 +559,8 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 	}
 
 	var body struct {
-		AI bool `json:"ai"`
+		AI     bool   `json:"ai"`
+		Prompt string `json:"prompt"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
@@ -568,6 +569,9 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 	isServerAI := body.AI && config.ServerSideAI && config.GeminiAPIKey != ""
 	if isServerAI {
 		owner = serverOwnerID
+		if body.Prompt != "" {
+			config.SystemInstruction = config.SystemInstruction + "\n\nInstrução adicional para esta chamada específica: " + body.Prompt
+		}
 	}
 
 	if !isServerAI {
