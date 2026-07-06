@@ -215,12 +215,27 @@
     var tBox = document.getElementById("wacalls-transcript");
     if (!tBox) return;
     tBox.style.display = "flex";
-    var line = el("div");
-    line.style.marginBottom = "4px";
+    
+    var lastLine = tBox.lastElementChild;
     var label = speaker === "ai" ? "IA" : "Cliente";
-    var color = speaker === "ai" ? "#d97706" : "#2781F6";
-    line.innerHTML = '<strong style="color:' + color + '">' + label + ':</strong> ' + esc(text);
-    tBox.appendChild(line);
+    
+    if (lastLine && lastLine.getAttribute("data-speaker") === speaker) {
+      var textNode = lastLine.querySelector(".trans-text");
+      if (textNode) {
+        textNode.textContent += text;
+      } else {
+        lastLine.innerHTML += esc(text);
+      }
+    } else {
+      var line = el("div");
+      line.style.marginBottom = "4px";
+      line.setAttribute("data-speaker", speaker);
+      
+      var color = speaker === "ai" ? "#d97706" : "#2781F6";
+      line.innerHTML = '<strong style="color:' + color + '">' + label + ':</strong> <span class="trans-text">' + esc(text) + '</span>';
+      tBox.appendChild(line);
+    }
+    
     tBox.scrollTop = tBox.scrollHeight;
   }
 
@@ -236,32 +251,10 @@
   function getChatwootContext() {
     try {
       var messages = [];
-      var selectors = [".linkified", ".message-text", ".message-content", ".chat-bubble", ".bubble"];
-      var els = [];
+      var els = document.querySelectorAll(".linkified, .message-text");
       
-      for (var s = 0; s < selectors.length; s++) {
-        var found = document.querySelectorAll(selectors[s]);
-        var filtered = [];
-        for (var f = 0; f < found.length; f++) {
-          var item = found[f];
-          var isInsideChat = false;
-          var node = item;
-          while (node) {
-            var cls = node.className || "";
-            if (typeof cls === "string" && (cls.indexOf("conversation") > -1 || cls.indexOf("messages") > -1 || cls.indexOf("chat") > -1)) {
-              isInsideChat = true;
-              break;
-            }
-            node = node.parentElement;
-          }
-          if (isInsideChat) {
-            filtered.push(item);
-          }
-        }
-        if (filtered.length > 0) {
-          els = filtered;
-          break;
-        }
+      if (els.length === 0) {
+        els = document.querySelectorAll(".message-content, .rich-text");
       }
       
       for (var i = 0; i < els.length; i++) {
@@ -273,7 +266,7 @@
         var isOutgoing = false;
         var p = el;
         var depth = 0;
-        while (p && depth < 6) {
+        while (p && depth < 8) {
           var cls = p.className || "";
           if (typeof cls === "string") {
             if (cls.indexOf("justify-end") > -1 || cls.indexOf("outgoing") > -1 || cls.indexOf("is-agent") > -1 || cls.indexOf("current-user") > -1 || cls.indexOf("flex-row-reverse") > -1) {
