@@ -682,3 +682,128 @@ func sourceIDForInbox(contact map[string]any, inboxID int) string {
 	}
 	return ""
 }
+
+// reqList faz uma requisição ao Chatwoot que retorna uma lista (JSON array ou objeto com payload/messages).
+func (c ChatwootConfig) reqList(method, path string) ([]any, int, error) {
+	req, err := http.NewRequest(method, c.base()+path, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("api_access_token", c.AccountToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := cwHTTP.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	
+	// Tenta primeiro parsear como lista diretamente
+	var list []any
+	if err := json.Unmarshal(data, &list); err == nil {
+		return list, resp.StatusCode, nil
+	}
+	
+	// Se falhar, tenta parsear como objeto/mapa e extrair a chave "payload" ou "messages"
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err == nil {
+		if payload, ok := obj["payload"]; ok {
+			return asList(payload), resp.StatusCode, nil
+		}
+		if pList, ok := obj["messages"]; ok {
+			return asList(pList), resp.StatusCode, nil
+		}
+	}
+	
+	return nil, resp.StatusCode, fmt.Errorf("failed to parse chatwoot list response")
+}
+
+// fetchChatwootContext busca o histórico de conversas no Chatwoot de forma robusta a partir do telefone
+func (s *Session) fetchChatwootContext(phone string) string {
+	cfg := s.getChatwoot()
+	if !cfg.valid() {
+		return ""
+	}
+
+	// 1. Procura o contato pelo telefone
+	var contactID int
+	res, code, err := cfg.req(http.MethodGet, "/contacts/search?q="+phone, nil)
+	if err != nil || code != 200 {
+		s.log.Warn("chatwoot fetch context: contact search failed", "phone", phone, "code", code, "err", err)
+		return ""
+	}
+	payloadList := asList(res["payload"])
+	if len(payloadList) == 0 {
+		return ""
+	}
+	for _, it := range payloadList {
+		m := asMap(it)
+		if id := asInt(m["id"]); id != 0 {
+			contactID = id
+			break
+		}
+	}
+	if contactID == 0 {
+		return ""
+	}
+
+	// 2. Procura a conversa ativa
+	var convID int
+	cRes, cCode, cErr := cfg.req(http.MethodGet, fmt.Sprintf("/contacts/%d/conversations", contactID), nil)
+	if cErr != nil || cCode != 200 {
+		s.log.Warn("chatwoot fetch context: conversations search failed", "contactID", contactID, "err", cErr)
+		return ""
+	}
+	cList := asList(cRes["payload"])
+	for _, it := range cList {
+		m := asMap(it)
+		if asInt(m["inbox_id"]) == cfg.InboxID {
+			st := asStr(m["status"])
+			if st == "open" || st == "pending" || st == "snoozed" {
+				convID = asInt(m["id"])
+				break
+			}
+		}
+	}
+	if convID == 0 {
+		return ""
+	}
+
+	// 3. Busca as mensagens da conversa
+	mList, mCode, mErr := cfg.reqList(http.MethodGet, fmt.Sprintf("/conversations/%d/messages", convID))
+	if mErr != nil || mCode != 200 {
+		s.log.Warn("chatwoot fetch context: messages lookup failed", "convID", convID, "code", mCode, "err", mErr)
+		return ""
+	}
+
+	// Limita às últimas 10 mensagens
+	if len(mList) > 10 {
+		mList = mList[len(mList)-10:]
+	}
+
+	var promptLines []string
+	promptLines = append(promptLines, "CONTEXTO DA CONVERSA ANTERIOR NO CHATWOOT:")
+	for _, it := range mList {
+		m := asMap(it)
+		content := strings.TrimSpace(asStr(m["content"]))
+		if content == "" {
+			continue
+		}
+		// Desconsidera mensagens privadas/internas
+		if p, ok := m["private"].(bool); ok && p {
+			continue
+		}
+		senderName := "Cliente"
+		if asStr(m["message_type"]) == "outgoing" {
+			senderName = "Atendente (Você)"
+		}
+		promptLines = append(promptLines, fmt.Sprintf("- %s: %s", senderName, content))
+	}
+	
+	if len(promptLines) <= 1 {
+		return "" // Sem conteúdo útil
+	}
+
+	promptLines = append(promptLines, "\nUse este histórico para saber o que já foi conversado e evitar repetir perguntas.")
+	return strings.Join(promptLines, "\n")
+}

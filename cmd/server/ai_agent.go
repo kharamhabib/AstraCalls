@@ -79,6 +79,18 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 		}
 	}
 
+	// Se a instrução de sistema não contiver o histórico do Chatwoot, resolve o histórico no backend
+	cleanPhone := peer
+	if jid, err := types.ParseJID(peer); err == nil {
+		cleanPhone = sess.realPhone(jid)
+	}
+	cleanPhone = digitsOnly(cleanPhone)
+	if cleanPhone != "" && !strings.Contains(config.SystemInstruction, "CONTEXTO DA CONVERSA ANTERIOR") {
+		if history := sess.fetchChatwootContext(cleanPhone); history != "" {
+			config.SystemInstruction += "\n\n" + history
+		}
+	}
+
 	// Processa tags dinâmicas no prompt (mesmo comportamento do frontend)
 	now := time.Now()
 	tzEnv := os.Getenv("TZ")
