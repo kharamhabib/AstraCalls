@@ -20,7 +20,13 @@ export const openCall = async (
   pc.addTransceiver("audio", { direction: "recvonly" });
   const remoteHolder: { stream: MediaStream | null } = { stream: null };
   pc.ontrack = (ev) => {
-    if (ev.streams[0]) remoteHolder.stream = ev.streams[0];
+    if (ev.streams && ev.streams[0]) {
+      remoteHolder.stream = ev.streams[0];
+    } else if (ev.track) {
+      const stream = new MediaStream();
+      stream.addTrack(ev.track);
+      remoteHolder.stream = stream;
+    }
   };
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
