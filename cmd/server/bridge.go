@@ -99,7 +99,7 @@ func NewBridge(offerSDP string, log *slog.Logger) (*Bridge, string, error) {
 			MimeType:    webrtc.MimeTypeOpus,
 			ClockRate:   48000,
 			Channels:    2,
-			SDPFmtpLine: "minptime=10;useinbandfec=1",
+			SDPFmtpLine: "minptime=10;useinbandfec=1;stereo=0;sprop-stereo=0;maxplaybackrate=16000;sprop-maxcapturerate=16000",
 		},
 		"audio", "wacalls",
 	)
