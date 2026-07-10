@@ -31,9 +31,9 @@ $env:CGO_ENABLED = "1"
 $env:CGO_LDFLAGS = "-L.\native -lopus_mlow"
 $env:PATH = "$pwd\native;" + $env:PATH
 
-# 3. Inicia o Servidor Backend (Go) em uma janela separada
+# 3. Inicia o Servidor Backend (Go) em uma janela separada com auto-reinicialização em caso de queda
 Write-Host "Iniciando o Servidor Backend (Go) na porta 3001..." -ForegroundColor Green
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = 'AstraCalls Backend'; go run -tags mlow ./cmd/server -addr :3001 -debug" -WorkingDirectory $pwd
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = 'AstraCalls Backend'; do { Write-Host 'Iniciando AstraCalls Backend...' -ForegroundColor Cyan; go run -tags mlow ./cmd/server -addr :3001 -debug; Write-Host 'Servidor parou ou caiu! Reiniciando em 3 segundos... (Pressione Ctrl+C para cancelar)' -ForegroundColor Red; Start-Sleep -Seconds 3 } while (`$true)" -WorkingDirectory $pwd
 
 # 4. Inicia o Servidor Frontend (Vite) em outra janela separada
 Write-Host "Iniciando o Servidor Frontend (Vite) na porta 5173..." -ForegroundColor Green
