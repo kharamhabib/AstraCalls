@@ -539,6 +539,11 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		}
 		pcm16, err := browserOpus.Decode(payload)
 		if err != nil {
+			s.log.Error("OnBrowserRTP: Decode failed", "err", err)
+			return
+		}
+		if len(pcm16) == 0 {
+			s.log.Warn("OnBrowserRTP: Decode returned 0 samples")
 			return
 		}
 		ac.cm.FeedCapturedPCM(pcm16)

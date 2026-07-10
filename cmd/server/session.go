@@ -141,16 +141,22 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	cm.OnPeerAudio = func(pcm16 []float32) {
 		ac, ok := s.reg.get(callID)
 		if !ok || ac.bridge == nil || ac.browserOpus == nil {
+			s.log.Debug("OnPeerAudio: inactive or missing components", "ok", ok, "has_bridge", ac.bridge != nil, "has_opus", ac.browserOpus != nil)
 			return
 		}
-		// browserOpus opera a 16kHz (mesma taxa do mlow) para evitar assertion
-		// fatal no resampler SILK da lib opus_mlow (não suporta 48kHz).
-		// O decoder Opus do browser converte internamente para 48kHz.
 		opus, err := ac.browserOpus.Encode(pcm16)
-		if err != nil || len(opus) == 0 {
+		if err != nil {
+			s.log.Error("OnPeerAudio: Encode failed", "err", err)
 			return
 		}
-		_ = ac.bridge.WriteOpus(opus, 60*time.Millisecond)
+		if len(opus) == 0 {
+			s.log.Warn("OnPeerAudio: Encode returned 0 bytes")
+			return
+		}
+		err = ac.bridge.WriteOpus(opus, 60*time.Millisecond)
+		if err != nil {
+			s.log.Error("OnPeerAudio: WriteOpus failed", "err", err)
+		}
 	}
 }
 
