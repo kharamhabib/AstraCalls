@@ -165,26 +165,33 @@ func (c *mlowCodec) Close() {
 }
 
 type opusGeneric struct {
-	mu         sync.Mutex
-	encoder    unsafe.Pointer
-	decoder    unsafe.Pointer
-	sampleRate int
-	frameSize  int
+	mu            sync.Mutex
+	encoder       unsafe.Pointer
+	decoder       unsafe.Pointer
+	decSampleRate int
+	decFrameSize  int
+	encSampleRate int
+	encFrameSize  int
 }
 
-func NewOpusCodec(sampleRate, frameSize int) (Codec, error) {
+func NewOpusCodec(decSampleRate, encSampleRate, decFrameSize, encFrameSize int) (Codec, error) {
 	globalInitOnce.Do(func() { C.opus_global_create() })
-	c := &opusGeneric{sampleRate: sampleRate, frameSize: frameSize}
+	c := &opusGeneric{
+		decSampleRate: decSampleRate,
+		decFrameSize:  decFrameSize,
+		encSampleRate: encSampleRate,
+		encFrameSize:  encFrameSize,
+	}
 
 	var errBuf [4]C.uchar
-	c.decoder = C.opus_decoder_create(C.int32_t(sampleRate), C.int(1), &errBuf[0])
+	c.decoder = C.opus_decoder_create(C.int32_t(decSampleRate), C.int(1), &errBuf[0])
 	if c.decoder == nil {
-		return nil, fmt.Errorf("opus_decoder_create(%d) failed", sampleRate)
+		return nil, fmt.Errorf("opus_decoder_create(%d) failed", decSampleRate)
 	}
-	c.encoder = C.opus_encoder_create(C.int32_t(sampleRate), C.int(1), C.int(opusApplicationVOIP), &errBuf[0])
+	c.encoder = C.opus_encoder_create(C.int32_t(encSampleRate), C.int(1), C.int(opusApplicationVOIP), &errBuf[0])
 	if c.encoder == nil {
 		C.opus_decoder_destroy(c.decoder)
-		return nil, fmt.Errorf("opus_encoder_create(%d) failed", sampleRate)
+		return nil, fmt.Errorf("opus_encoder_create(%d) failed", encSampleRate)
 	}
 	C.mlow_enc_ctl(c.encoder, C.int(ctlSetBitrate), C.int(24000))
 	C.mlow_enc_ctl(c.encoder, C.int(ctlSetComplexity), C.int(5))
@@ -228,17 +235,17 @@ func (c *opusGeneric) Decode(frame []byte) ([]float32, error) {
 	if c.decoder == nil {
 		return nil, fmt.Errorf("codec closed")
 	}
-	maxOut := c.sampleRate / 1000 * 120
+	maxOut := c.decSampleRate / 1000 * 120
 	out := make([]C.int16_t, maxOut)
 	var n C.int
 	if frame == nil {
-		n = C.opus_decode(c.decoder, nil, 0, &out[0], C.int(c.frameSize), 0)
+		n = C.opus_decode(c.decoder, nil, 0, &out[0], C.int(c.decFrameSize), 0)
 	} else {
 		cdata := (*C.uchar)(unsafe.Pointer(&frame[0]))
 		n = C.opus_decode(c.decoder, cdata, C.int32_t(len(frame)), &out[0], C.int(maxOut), 0)
 	}
 	if n <= 0 {
-		return make([]float32, c.frameSize), nil
+		return make([]float32, c.decFrameSize), nil
 	}
 	res := make([]float32, int(n))
 	for i := 0; i < int(n); i++ {
@@ -247,8 +254,8 @@ func (c *opusGeneric) Decode(frame []byte) ([]float32, error) {
 	return res, nil
 }
 
-func (c *opusGeneric) FrameSize() int  { return c.frameSize }
-func (c *opusGeneric) SampleRate() int { return c.sampleRate }
+func (c *opusGeneric) FrameSize() int  { return c.decFrameSize }
+func (c *opusGeneric) SampleRate() int { return c.decSampleRate }
 
 func (c *opusGeneric) Close() {
 	c.mu.Lock()
