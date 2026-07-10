@@ -143,7 +143,8 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		if !ok || ac.bridge == nil || ac.browserOpus == nil {
 			return
 		}
-		opus, err := ac.browserOpus.Encode(pcm16)
+		pcm48 := media.Upsample16to48(pcm16)
+		opus, err := ac.browserOpus.Encode(pcm48)
 		if err != nil || len(opus) == 0 {
 			return
 		}

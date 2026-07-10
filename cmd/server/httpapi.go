@@ -528,7 +528,7 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	browserOpus, ocErr := media.NewOpusCodec(48000, 16000, 960, 320)
+	browserOpus, ocErr := media.NewOpusCodec(48000, 960)
 	if ocErr != nil {
 		s.log.Warn("browser Opus codec unavailable — call audio disabled", "err", ocErr)
 		browserOpus = nil
