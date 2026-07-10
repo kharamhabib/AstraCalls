@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -142,8 +143,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		if !ok || ac.bridge == nil || ac.browserOpus == nil {
 			return
 		}
-		pcm48 := media.Upsample16to48(pcm16)
-		opus, err := ac.browserOpus.Encode(pcm48)
+		opus, err := ac.browserOpus.Encode(pcm16)
 		if err != nil || len(opus) == 0 {
 			return
 		}
@@ -175,6 +175,24 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 	if callID == "" {
 		return
 	}
+
+	// Filtrar chamadas antigas (sincronização de histórico/offline)
+	callTime := evt.Timestamp
+	if callTime.IsZero() {
+		// Fallback para ler o atributo 't' (timestamp) do XML do CallOffer
+		info := signaling.ExtractNodeInfo(node)
+		if info != nil && info.Timestamp != "" {
+			if tSec, err := strconv.ParseInt(info.Timestamp, 10, 64); err == nil {
+				callTime = time.Unix(tSec, 0)
+			}
+		}
+	}
+
+	if !callTime.IsZero() && time.Since(callTime) > 1*time.Minute {
+		s.log.Info("ignoring old incoming call offer (history/offline sync)", "callId", callID, "timestamp", callTime, "age", time.Since(callTime))
+		return
+	}
+
 	if max := s.mgr.maxCalls; max > 0 && s.reg.count() >= max {
 		s.rejectOffer(ctx, node, evt.From)
 		return
@@ -278,9 +296,15 @@ func (s *Session) handleEvent(rawEvt any) {
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
 	case *events.Message:
+		if !evt.Info.Timestamp.IsZero() && time.Since(evt.Info.Timestamp) > 1*time.Hour {
+			break
+		}
 		s.dispatchWebhook("message", summarizeMessage(evt))
 		go s.chatwootPushIncoming(evt)
 	case *events.Receipt:
+		if !evt.Timestamp.IsZero() && time.Since(evt.Timestamp) > 1*time.Hour {
+			break
+		}
 		s.dispatchWebhook("receipt", map[string]any{
 			"chat": evt.Chat.String(), "sender": evt.Sender.String(),
 			"type": string(evt.Type), "ids": evt.MessageIDs,

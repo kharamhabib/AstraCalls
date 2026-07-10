@@ -84,18 +84,41 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
     if (!conn) return;
     const offMic = attachMeter(conn.micStream, setMicDb);
     let offPeer: (() => void) | null = null;
-    const wait = setInterval(() => {
-      if (conn.remoteStream && audioRef.current) {
-        audioRef.current.srcObject = conn.remoteStream;
+
+    const playAndMeter = (stream: MediaStream) => {
+      if (audioRef.current && audioRef.current.srcObject !== stream) {
+        audioRef.current.srcObject = stream;
         audioRef.current.play().catch(() => {});
-        offPeer = attachMeter(conn.remoteStream, setPeerDb);
+        if (!offPeer) {
+          offPeer = attachMeter(stream, setPeerDb);
+        }
+      }
+    };
+
+    if (conn.remoteStream) {
+      playAndMeter(conn.remoteStream);
+    }
+
+    const handleTrack = (ev: RTCTrackEvent) => {
+      const stream = ev.streams[0] || conn.remoteStream;
+      if (stream) {
+        playAndMeter(stream);
+      }
+    };
+    conn.pc.addEventListener("track", handleTrack as unknown as EventListener);
+
+    const wait = setInterval(() => {
+      if (conn.remoteStream) {
+        playAndMeter(conn.remoteStream);
         clearInterval(wait);
       }
     }, 200);
+
     return () => {
       offMic();
       offPeer?.();
       clearInterval(wait);
+      conn.pc.removeEventListener("track", handleTrack as unknown as EventListener);
     };
   }, [conn]);
 

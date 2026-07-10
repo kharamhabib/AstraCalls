@@ -52,6 +52,7 @@ const (
 var globalInitOnce sync.Once
 
 type mlowCodec struct {
+	mu      sync.Mutex
 	encoder unsafe.Pointer
 	decoder unsafe.Pointer
 }
@@ -94,6 +95,11 @@ func NewMLowCodec(opts CodecOptions) (Codec, error) {
 }
 
 func (c *mlowCodec) Encode(pcm []float32) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.encoder == nil {
+		return nil, fmt.Errorf("codec closed")
+	}
 	if len(pcm) == 0 {
 		return nil, nil
 	}
@@ -119,6 +125,11 @@ func (c *mlowCodec) Encode(pcm []float32) ([]byte, error) {
 }
 
 func (c *mlowCodec) Decode(frame []byte) ([]float32, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.decoder == nil {
+		return nil, fmt.Errorf("codec closed")
+	}
 	out := make([]C.int16_t, mlowMaxOut)
 	var n C.int
 	if frame == nil {
@@ -141,6 +152,8 @@ func (c *mlowCodec) FrameSize() int  { return mlowFrameSize }
 func (c *mlowCodec) SampleRate() int { return mlowSampleRate }
 
 func (c *mlowCodec) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.decoder != nil {
 		C.opus_decoder_destroy(c.decoder)
 		c.decoder = nil
@@ -152,6 +165,7 @@ func (c *mlowCodec) Close() {
 }
 
 type opusGeneric struct {
+	mu         sync.Mutex
 	encoder    unsafe.Pointer
 	decoder    unsafe.Pointer
 	sampleRate int
@@ -179,6 +193,11 @@ func NewOpusCodec(sampleRate, frameSize int) (Codec, error) {
 }
 
 func (c *opusGeneric) Encode(pcm []float32) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.encoder == nil {
+		return nil, fmt.Errorf("codec closed")
+	}
 	if len(pcm) == 0 {
 		return nil, nil
 	}
@@ -204,6 +223,11 @@ func (c *opusGeneric) Encode(pcm []float32) ([]byte, error) {
 }
 
 func (c *opusGeneric) Decode(frame []byte) ([]float32, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.decoder == nil {
+		return nil, fmt.Errorf("codec closed")
+	}
 	maxOut := c.sampleRate / 1000 * 120
 	out := make([]C.int16_t, maxOut)
 	var n C.int
@@ -227,6 +251,8 @@ func (c *opusGeneric) FrameSize() int  { return c.frameSize }
 func (c *opusGeneric) SampleRate() int { return c.sampleRate }
 
 func (c *opusGeneric) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.decoder != nil {
 		C.opus_decoder_destroy(c.decoder)
 		c.decoder = nil

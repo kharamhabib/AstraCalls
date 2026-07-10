@@ -141,6 +141,7 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 			continue
 		}
 		client := whatsmeow.NewClient(device, m.waLogger)
+		client.ManualHistorySyncDownload = true
 		s := newSession(m, row.ID, row.Name, client)
 		s.waContainer = container
 		s.waDB = db
@@ -180,6 +181,7 @@ func (m *SessionManager) Create(name string) (string, error) {
 	}
 	device := container.NewDevice()
 	client := whatsmeow.NewClient(device, m.waLogger)
+	client.ManualHistorySyncDownload = true
 	s := newSession(m, id, name, client)
 	s.waContainer = container
 	s.waDB = db
@@ -244,7 +246,9 @@ func (m *SessionManager) Logout(ctx context.Context, id string) error {
 			m.log.Warn("logout failed", "session", id, "err", err)
 		}
 	}
-	s.replaceClient(whatsmeow.NewClient(s.waContainer.NewDevice(), m.waLogger))
+	cli := whatsmeow.NewClient(s.waContainer.NewDevice(), m.waLogger)
+	cli.ManualHistorySyncDownload = true
+	s.replaceClient(cli)
 	_ = m.store.setJID(ctx, id, "")
 	s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
 	m.log.Info("session disconnected", "session", id)
@@ -259,7 +263,9 @@ func (m *SessionManager) Pair(id string) error {
 	if s.client.Store.ID != nil {
 		return fmt.Errorf("session already paired")
 	}
-	s.replaceClient(whatsmeow.NewClient(s.waContainer.NewDevice(), m.waLogger))
+	cli := whatsmeow.NewClient(s.waContainer.NewDevice(), m.waLogger)
+	cli.ManualHistorySyncDownload = true
+	s.replaceClient(cli)
 	if err := s.startPairing(m.appCtx); err != nil {
 		return fmt.Errorf("start pairing: %w", err)
 	}
