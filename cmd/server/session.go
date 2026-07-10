@@ -144,11 +144,18 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			return
 		}
 		pcm48 := media.Upsample16to48(pcm16)
-		opus, err := ac.browserOpus.Encode(pcm48)
-		if err != nil || len(opus) == 0 {
-			return
+		// O encoder browserOpus (opus_mlow @ 48kHz) suporta apenas frameSize=960.
+		// O upsample de 960 amostras@16kHz gera 2880 amostras@48kHz.
+		// Precisamos fatiar em chunks de 960 para evitar assertion fatal no
+		// resampler SILK da lib opus_mlow.
+		fs := ac.browserOpus.FrameSize()
+		for off := 0; off+fs <= len(pcm48); off += fs {
+			opus, err := ac.browserOpus.Encode(pcm48[off : off+fs])
+			if err != nil || len(opus) == 0 {
+				continue
+			}
+			_ = ac.bridge.WriteOpus(opus, time.Duration(fs)*time.Second/48000)
 		}
-		_ = ac.bridge.WriteOpus(opus, 60*time.Millisecond)
 	}
 }
 

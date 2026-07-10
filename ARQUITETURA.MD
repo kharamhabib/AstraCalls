@@ -184,6 +184,9 @@ Para suportar chamadas simultâneas estáveis diretamente no servidor e evitar t
 * **Detecção de Desconexões SSE Mortas**: Goroutines de transmissão SSE monitoram o encerramento de conexão do navegador e encerram a escuta do canal imediatamente ao detectar erro de escrita (ping falho).
 * **Independência de Processo**: O rebranding visual de visualização para **RockCall** foi feito estritamente no frontend (React, HTML). Os pacotes Go, caminhos de importação internos e binários de compilação mantiveram os nomes originais (`wacalls`) para não quebrar referências do sistema de build nativo e das dependências CGO Opus.
 * **Persistência de Transcrições**: As falas do usuário e da IA são agrupadas na store do Zustand (`transcripts`) por tempo e por orador (se client-side), ou gravadas no banco de dados Postgres via transação SQL ao fim da chamada (se server-side).
+* **Filtragem de Eventos Offline na Inicialização**: Ao conectar ao WhatsApp, o servidor descarta silenciosamente chamadas (`CallOffer`) com mais de 1 minuto e mensagens/recibos com mais de 1 hora, impedindo que o backlog offline dispare ringtones fantasma, crie chamadas ativas inválidas ou spamme integrações (Chatwoot/webhooks) com dados antigos.
+* **Desativação de History Sync Automático**: O `ManualHistorySyncDownload` é ativado em todas as instâncias do cliente `whatsmeow`, prevenindo o download e processamento de blobs de histórico de conversa que consumiam CPU e banda por vários minutos na inicialização.
+* **Chunking de Frames no browserOpus**: O áudio do peer decodificado pelo codec `mlow` (960 amostras a 16kHz) é reamostrado para 48kHz (2880 amostras) e fatiado em 3 chunks de 960 amostras antes de ser codificado pelo encoder `browserOpus`. Isso evita uma assertion fatal no resampler SILK da biblioteca `opus_mlow` customizada do WhatsApp, que não suporta frames de 2880 amostras diretamente.
 
 ---
 
