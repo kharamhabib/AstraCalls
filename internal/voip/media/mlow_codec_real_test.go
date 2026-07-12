@@ -49,3 +49,28 @@ func TestMLowCodecRoundtrip(t *testing.T) {
 		t.Fatal("PLC returned no samples")
 	}
 }
+
+func TestOpusCodecRoundtrip(t *testing.T) {
+	codec, err := NewOpusCodec(16000, 320)
+	if err != nil {
+		t.Fatalf("NewOpusCodec: %v", err)
+	}
+	defer codec.Close()
+
+	frame := make([]float32, 320)
+	for i := range frame {
+		frame[i] = 0.3 * float32(math.Sin(2*math.Pi*440*float64(i)/16000))
+	}
+
+	encoded, err := codec.Encode(frame)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	t.Logf("encoded %d samples → %d bytes (Opus)", len(frame), len(encoded))
+
+	decoded, err := codec.Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	t.Logf("decoded → %d samples", len(decoded))
+}
