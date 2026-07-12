@@ -16,8 +16,12 @@ export const openCall = async (
     audio: micDeviceId ? { deviceId: { exact: micDeviceId } } : true,
   });
   const pc = new RTCPeerConnection({ iceServers: [] });
-  micStream.getAudioTracks().forEach((t) => pc.addTrack(t, micStream));
-  pc.addTransceiver("audio", { direction: "recvonly" });
+  const tracks = micStream.getAudioTracks();
+  if (tracks.length > 0) {
+    tracks.forEach((t) => pc.addTrack(t, micStream));
+  } else {
+    pc.addTransceiver("audio", { direction: "recvonly" });
+  }
   const remoteHolder: { stream: MediaStream | null } = { stream: null };
   pc.ontrack = (ev) => {
     if (ev.streams && ev.streams[0]) {
