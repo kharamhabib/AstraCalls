@@ -624,7 +624,7 @@ export class GeminiLiveAgent {
           setTimeout(check, 100);
         } else {
           // Pequeno delay adicional para transição suave
-          setTimeout(resolve, 350);
+          setTimeout(resolve, 1500);
         }
       };
       check();

@@ -414,9 +414,9 @@ func (a *ServerAIAgent) handleToolCall(ctx context.Context, name string, args ma
 	switch name {
 	case "hangup":
 		a.log.Info("[ServerAIAgent] Tool hangup disparada")
-		// Aguarda brevemente para a IA terminar de falar, depois desliga
+		// Aguarda ativamente o fim do áudio na fila antes de desligar
 		go func() {
-			time.Sleep(2 * time.Second)
+			a.waitForAudioFinish(context.Background())
 			a.Detach()
 			a.sess.terminateCall(a.callID, core.EndCallReasonUserEnded)
 			a.sess.removeCall(a.callID)
@@ -838,4 +838,33 @@ func extractSummaryText(data map[string]any) string {
 	}
 	text, _ := p0["text"].(string)
 	return text
+}
+
+// waitForAudioFinish aguarda a fila de áudio de saída esvaziar (IA terminar de falar) antes de desligar.
+func (a *ServerAIAgent) waitForAudioFinish(ctx context.Context) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	// Timeout de segurança de 15 segundos
+	timeout := time.After(15 * time.Second)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timeout:
+			a.log.Warn("[ServerAIAgent] Timeout aguardando fim do áudio para desligar")
+			return
+		case <-ticker.C:
+			a.queueMu.Lock()
+			qLen := len(a.audioQueue)
+			a.queueMu.Unlock()
+
+			if qLen == 0 {
+				// Pequeno delay adicional de 1.5 segundos para garantir que o cliente ouviu tudo
+				time.Sleep(1500 * time.Millisecond)
+				return
+			}
+		}
+	}
 }
