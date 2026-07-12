@@ -92,8 +92,11 @@ export const useAICallHandler = () => {
               startingAgentsRef.current.delete(call.callId);
               return;
             }
-            // Acopla a IA se autoAnswer estiver ligado OU se for uma chamada agendada disparada pela IA
-            if (enabled && aiConfig && (aiConfig.autoAnswer || isScheduled)) {
+            // Acopla a IA se:
+            // - For chamada INBOUND e autoAnswer estiver ligado
+            // - OU for uma chamada agendada/outbound explicitamente disparada com IA (isScheduled)
+            const shouldAttachAI = isScheduled || (aiConfig.autoAnswer && call.direction === "inbound");
+            if (enabled && aiConfig && shouldAttachAI) {
               try {
                 // Remove do progresso de agendadas para não re-disparar
                 if (isScheduled) {
