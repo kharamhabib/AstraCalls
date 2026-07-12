@@ -604,7 +604,15 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 			if info.StateData.State == core.CallStateActive {
 				// Chamada conectada — acopla o agente de voz server-side
 				go func() {
-					agent := NewServerAIAgent(sess, id, ac.cm.CurrentCall().PeerJid, "inbound", ac.cm, config, s.log)
+					peerPhone := info.PeerJid
+					if info.CallerPn != "" {
+						peerPhone = info.CallerPn
+					} else {
+						if jid, err := types.ParseJID(peerPhone); err == nil {
+							peerPhone = sess.realPhone(jid)
+						}
+					}
+					agent := NewServerAIAgent(sess, id, peerPhone, "inbound", ac.cm, config, s.log)
 					if err := agent.Start(context.Background()); err != nil {
 						s.log.Error("[ServerAI] Erro ao iniciar agente manual inbound", "err", err, "callId", id)
 						return
@@ -658,11 +666,10 @@ func (s *server) handleGetContactInfo(w http.ResponseWriter, r *http.Request) {
 		jid = types.NewJID(normalizePhone(jidStr), types.DefaultUserServer)
 	}
 
-	var phone string = jid.User
-	if jid.Server == "lid" && sess.client.Store.LIDs != nil {
-		if pn, err := sess.client.Store.LIDs.GetPNForLID(r.Context(), jid); err == nil && !pn.IsEmpty() {
-			phone = pn.User
-			jid = pn
+	var phone string = sess.realPhone(jid)
+	if phone != jid.User {
+		if parsedJid, err := types.ParseJID(phone + "@" + types.DefaultUserServer); err == nil {
+			jid = parsedJid
 		}
 	}
 

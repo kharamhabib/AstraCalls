@@ -204,7 +204,7 @@ O script injetado na interface do Chatwoot (`super_admin > app_config > internal
 ### 7.2 Resolução de Contexto de Chat no Backend (Go)
 Para alimentar a IA com o histórico recente de conversas por texto do Chatwoot e evitar que o operador precise estar com a aba certa aberta, o fluxo foi movido inteiramente para o backend Go (`chatwoot.go` e `ai_agent.go`):
 1. **Desacoplamento do DOM**: O widget JavaScript não faz mais nenhuma leitura de mensagens no DOM do navegador, blindando o sistema contra quebras devido a atualizações de layout do Chatwoot.
-2. **Busca Robusta via API**: Ao instanciar o agente de IA (`NewServerAIAgent`), o servidor Go obtém o telefone do contato (resolvendo JID LID -> PN se necessário).
+2. **Busca Robusta via API**: Ao instanciar o agente de IA (`NewServerAIAgent`), o servidor Go obtém o telefone do contato (resolvendo JID LID -> PN se necessário). Para chamadas recebidas (inbound), a resolução utiliza `CallCreatorAlt` (alternativa contendo o número real) e o banco de dados de LIDs, salvando o resultado no `CallInfo` (campo `CallerPn`) para que fique disponível no auto-atendimento, aceite manual e consultas do widget.
 3. **Resolução de Conversa e Mensagens**: O Go realiza chamadas autenticadas na API do Chatwoot buscando o contato pelo telefone, localiza a conversa ativa aberta ou pendente associada e extrai as últimas 10 mensagens (via `GET /conversations/{id}/messages`).
 4. **Alimentação do Gemini**: As mensagens são ordenadas cronologicamente, formatadas e acopladas à diretiva de sistema (`SystemInstruction`) da IA. Desse modo, o agente do Gemini Live atende ou inicia a ligação sabendo exatamente o que foi conversado no chat por texto anteriormente.
 

@@ -85,6 +85,22 @@ func (s *Session) realPhone(jid types.JID) string {
 	if pn, err := s.client.Store.LIDs.GetPNForLID(context.Background(), jid); err == nil && pn.User != "" {
 		return pn.User
 	}
+	// Fallback: tenta buscar no registro de chamadas ativas
+	if s.reg != nil {
+		s.reg.mu.Lock()
+		jidStr := jid.String()
+		for _, ac := range s.reg.calls {
+			if ac.cm != nil {
+				if info := ac.cm.CurrentCall(); info != nil {
+					if (info.PeerJid == jidStr || info.CallCreator == jidStr) && info.CallerPn != "" {
+						s.reg.mu.Unlock()
+						return info.CallerPn
+					}
+				}
+			}
+		}
+		s.reg.mu.Unlock()
+	}
 	return jid.User
 }
 

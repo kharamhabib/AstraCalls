@@ -216,6 +216,19 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 	cm := s.createCall(callID)
 	cm.HandleCallOffer(ctx, node, evt.From)
 
+	// Resolve o telefone real de forma robusta e salva no CallInfo
+	callerPn := evt.From.User
+	if evt.From.Server != types.DefaultUserServer {
+		if evt.CallCreatorAlt.Server == types.DefaultUserServer && evt.CallCreatorAlt.User != "" {
+			callerPn = evt.CallCreatorAlt.User
+		} else {
+			callerPn = s.realPhone(evt.From)
+		}
+	}
+	if info := cm.CurrentCall(); info != nil {
+		info.CallerPn = callerPn
+	}
+
 	// Auto-atendimento server-side: aceita e acopla IA automaticamente
 	config := s.getAIConfig()
 	if config.ServerSideAI && config.AutoAnswer && config.GeminiAPIKey != "" {
@@ -274,7 +287,11 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 				}
 				if info.StateData.State == core.CallStateActive {
 					go func() {
-						agent := NewServerAIAgent(s, callID, evt.From.String(), "inbound", ac.cm, config, s.log)
+						peerPhone := callerPn
+						if peerPhone == "" {
+							peerPhone = info.PeerJid
+						}
+						agent := NewServerAIAgent(s, callID, peerPhone, "inbound", ac.cm, config, s.log)
 						if err := agent.Start(s.mgr.appCtx); err != nil {
 							s.log.Error("[ServerAI] Erro ao iniciar agente", "err", err, "callId", callID)
 						} else if s.mgr.Scheduler != nil {
