@@ -8,6 +8,15 @@
 (function () {
   "use strict";
   var script = document.currentScript;
+  if (!script) {
+    var scripts = document.getElementsByTagName("script");
+    for (var i = 0; i < scripts.length; i++) {
+      if (scripts[i].src && (scripts[i].src.indexOf("/widget.js") > -1 || scripts[i].src.indexOf("/widget.min.js") > -1)) {
+        script = scripts[i];
+        break;
+      }
+    }
+  }
   var BASE = (script && script.getAttribute("data-url")) || (script ? new URL(script.src).origin : "");
   var KEY = (script && script.getAttribute("data-api-key")) || "";
   var ANCHOR = (script && script.getAttribute("data-anchor")) || "";
@@ -320,14 +329,23 @@
     if (!BASE || globalES) return;
     try {
       var url = BASE + "/api/events" + (KEY ? "?apiKey=" + encodeURIComponent(KEY) : "");
+      console.log("[wacalls-widget] Conectando ao EventSource:", url);
       globalES = new EventSource(url);
+      globalES.onopen = function () {
+        console.log("[wacalls-widget] EventSource conectado com sucesso");
+      };
       globalES.onmessage = function (ev) {
         var msg;
         try { msg = JSON.parse(ev.data); } catch (e) { return; }
+        console.log("[wacalls-widget] Evento SSE recebido:", msg);
         handleEvent(msg);
       };
-      globalES.onerror = function () {}; 
-    } catch (e) {}
+      globalES.onerror = function (err) {
+        console.error("[wacalls-widget] Erro no EventSource:", err);
+      }; 
+    } catch (e) {
+      console.error("[wacalls-widget] Erro ao instanciar EventSource:", e);
+    }
   }
 
   function handleEvent(msg) {
@@ -434,6 +452,17 @@
     stopRing();
     var isServerAI = isAI && resolved && resolved.serverSideAI;
     render({ inCall: true, name: resolved ? resolved.name : "Chamada recebida", phone: resolved ? resolved.phone : inc.peer, status: isServerAI ? "IA conectando…" : "Conectando…", isServerAI: isServerAI });
+    call = {
+      pc: null,
+      mic: null,
+      callId: inc.callId,
+      session: inc.sessionId,
+      t0: null,
+      timer: null,
+      es: null,
+      answered: false,
+      isServerAI: isServerAI
+    };
     try {
       await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/accept", {
         method: "POST",
@@ -466,20 +495,16 @@
           body: { sdp_offer: pc.localDescription.sdp },
         });
         await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp_answer });
+        
+        if (call && call.callId === inc.callId) {
+          call.pc = pc;
+          call.mic = mic;
+        }
       }
 
-      call = {
-        pc: pc,
-        mic: mic,
-        callId: inc.callId,
-        session: inc.sessionId,
-        t0: null,
-        timer: null,
-        es: null,
-        answered: false,
-        isServerAI: isServerAI
-      };
-      markAnswered();
+      if (call && call.callId === inc.callId && !call.answered) {
+        markAnswered();
+      }
     } catch (e) {
       setStatus("Erro: " + (e.message || e));
       try { await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId, { method: "DELETE" }); } catch (_) {}
@@ -556,6 +581,7 @@
   }
 
   function refreshBinding() {
+    connectEvents();
     var key = convKey();
     if (key === currentConvKey) return; 
     currentConvKey = key;
@@ -596,6 +622,7 @@
     "(Se o ícone apareceu aqui por engano, é cache do Chatwoot — atualize a página.)";
 
   function onCall() {
+    connectEvents();
     console.log("[wacalls-widget] clique no botão de ligar");
     if (resolved) {
       render({ session: resolved.session, phone: resolved.phone, name: resolved.name, hasAI: resolved.hasAI && resolved.serverSideAI, serverSideAI: resolved.serverSideAI });
