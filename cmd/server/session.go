@@ -144,13 +144,11 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			s.log.Debug("OnPeerAudio: inactive or missing components", "ok", ok, "has_bridge", ac.bridge != nil, "has_opus", ac.browserOpus != nil)
 			return
 		}
-		// O browserOpus opera a 48kHz. O upsample de 960 amostras @ 16kHz gera 2880 amostras @ 48kHz.
-		// A lib do WhatsApp (opus_mlow) dá assertion fatal se tentarmos codificar 2880 amostras de uma vez.
-		// Precisamos fatiar em chunks de 960 amostras (20ms a 48kHz) para codificação segura.
-		pcm48 := media.Upsample16to48(pcm16)
-		fs := ac.browserOpus.FrameSize() // fs = 960
-		for off := 0; off+fs <= len(pcm48); off += fs {
-			opus, err := ac.browserOpus.Encode(pcm48[off : off+fs])
+		// O browserOpus agora opera a 16kHz, evitando crash no resampler SILK da lib opus_mlow.
+		// Fatiamos em chunks de 320 amostras (20ms a 16kHz) para codificação segura.
+		fs := ac.browserOpus.FrameSize() // fs = 320
+		for off := 0; off+fs <= len(pcm16); off += fs {
+			opus, err := ac.browserOpus.Encode(pcm16[off : off+fs])
 			if err != nil {
 				s.log.Error("OnPeerAudio: Encode failed", "err", err)
 				continue

@@ -1,6 +1,7 @@
 package call
 
 import (
+	"context"
 	"encoding/binary"
 	"time"
 	"wacalls/internal/voip/core"
@@ -88,13 +89,23 @@ func (m *CallManager) startSilenceKeepaliveLocked() {
 		ticker := time.NewTicker(60 * time.Millisecond)
 		defer ticker.Stop()
 		silence := make([]float32, frameSize)
+		lastConnectionTime := time.Now()
 		for {
 			select {
 			case <-stop:
 				return
 			case <-ticker.C:
 				m.mu.Lock()
-				ready := m.codec != nil && m.rtpSession != nil && m.srtpSession != nil && m.relay.HasConnection()
+				hasConn := m.relay.HasConnection()
+				if hasConn {
+					lastConnectionTime = time.Now()
+				} else if time.Since(lastConnectionTime) > 12*time.Second {
+					m.log.Warn("relay connection lost for more than 12s, terminating call")
+					m.mu.Unlock()
+					_ = m.EndCall(context.Background(), core.EndCallReasonTimeout)
+					return
+				}
+				ready := m.codec != nil && m.rtpSession != nil && m.srtpSession != nil && hasConn
 				idle := time.Since(m.lastCaptureAt) > 120*time.Millisecond
 				if ready && idle {
 					if opus, err := m.codec.Encode(silence); err == nil {
