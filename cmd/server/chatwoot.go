@@ -852,16 +852,13 @@ func (s *Session) fetchChatwootContext(phone string) string {
 		return ""
 	}
 
-	// Chatwoot retorna as mensagens do mais recente para o mais antigo.
-	// Pegamos as 10 mais recentes e invertemos a ordem para ficar cronológico para a IA.
+	// Chatwoot retorna as mensagens do mais antigo para o mais recente.
+	// Pegamos as 10 mais recentes (fim da lista), que já estão em ordem cronológica.
 	limit := 10
 	if len(mList) < limit {
 		limit = len(mList)
 	}
-	latestMsgs := mList[:limit]
-	for i, j := 0, len(latestMsgs)-1; i < j; i, j = i+1, j-1 {
-		latestMsgs[i], latestMsgs[j] = latestMsgs[j], latestMsgs[i]
-	}
+	latestMsgs := mList[len(mList)-limit:]
 
 	var promptLines []string
 	promptLines = append(promptLines, "=== DADOS DO CLIENTE NO CHATWOOT ===")
