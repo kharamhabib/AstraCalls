@@ -521,6 +521,21 @@ func chatIDFromWebhook(body map[string]any) string {
 	return ""
 }
 
+// handleGetChatwootHistory: retorna o histórico recente de conversas por texto do Chatwoot para um telefone.
+func (s *server) handleGetChatwootHistory(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	phone := r.URL.Query().Get("phone")
+	if phone == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "phone query param required"})
+		return
+	}
+	history := sess.fetchChatwootContext(phone)
+	writeJSON(w, http.StatusOK, map[string]any{"history": history})
+}
+
 // handleChatwootResolve: dado account_id + conversation_id, descobre a sessão
 // ligada e o telefone do contato (consultando a API do Chatwoot). Usado pelo widget.
 func (s *server) handleChatwootResolve(w http.ResponseWriter, r *http.Request) {

@@ -199,6 +199,15 @@ func (g *GeminiLiveClient) buildTools() []map[string]any {
 		}
 	}
 
+	// Se a integração com Chatwoot estiver ativa, adiciona a ferramenta fetch_chatwoot_history implicitamente
+	if g.config.ChatwootEnabled {
+		decls = append(decls, map[string]any{
+			"name":        "fetch_chatwoot_history",
+			"description": "Busca o histórico recente de conversas por texto do Chatwoot para obter contexto do atendimento. Chame essa ferramenta caso o cliente pergunte se você se lembra dele, se tem acesso ao chat, ou se pedir para retomar a conversa anterior.",
+			"parameters":  map[string]any{"type": "OBJECT", "properties": map[string]any{}},
+		})
+	}
+
 	for _, ct := range g.config.CustomTools {
 		props := map[string]any{}
 		var required []string

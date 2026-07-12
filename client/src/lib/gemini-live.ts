@@ -166,6 +166,15 @@ export class GeminiLiveSession {
             });
           }
 
+          // Se Chatwoot estiver habilitado, adiciona a ferramenta fetch_chatwoot_history implicitamente
+          if ((this.config as any).chatwootEnabled) {
+            functionDeclarations.push({
+              name: "fetch_chatwoot_history",
+              description: "Busca o histórico recente de conversas por texto do Chatwoot para obter contexto do atendimento. Chame essa ferramenta caso o cliente pergunte se você se lembra dele, se tem acesso ao chat, ou se pedir para retomar a conversa anterior.",
+              parameters: { type: "OBJECT", properties: {} }
+            });
+          }
+
           // Customizadas
           if (this.config.customTools && this.config.customTools.length > 0) {
             for (const ct of this.config.customTools) {
@@ -379,6 +388,8 @@ export class GeminiLiveAgent {
   private player: PCMPlayer | null = null;
   private detached = false;
 
+  private cleanedPhone = "";
+
   constructor(callId: string, pc: RTCPeerConnection, micStream: MediaStream, remoteStream: MediaStream, config: AIConfig) {
     this.callId = callId;
     this.pc = pc;
@@ -457,26 +468,51 @@ export class GeminiLiveAgent {
     if (cleanedPhone.includes("@")) {
       cleanedPhone = cleanedPhone.split("@")[0].split(":")[0].split(".")[0];
     }
+    this.cleanedPhone = cleanedPhone;
+
+    let chatwootEnabled = false;
     if (call) {
       try {
-        const response = await fetch(apiUrl(`/api/sessions/${call.sessionId}/contacts/${encodeURIComponent(call.peer)}`), {
+        // Busca info do contato
+        const contactResp = await fetch(apiUrl(`/api/sessions/${call.sessionId}/contacts/${encodeURIComponent(call.peer)}`), {
           headers: {
             "X-API-Key": getApiKey(),
             "X-Client-Id": getClientId(),
           }
         });
-        if (response.ok) {
-          const data = await response.json();
+        if (contactResp.ok) {
+          const data = await contactResp.json();
           if (data && data.name) {
             contactName = data.name;
           }
           if (data && data.phone) {
             cleanedPhone = data.phone;
+            this.cleanedPhone = data.phone;
           }
         }
       } catch (e) {
         console.error("[GeminiAgent] Erro ao buscar dados do contato para prompt:", e);
       }
+
+      try {
+        // Verifica se Chatwoot está ativado
+        const cwResp = await fetch(apiUrl(`/api/sessions/${call.sessionId}/chatwoot`), {
+          headers: {
+            "X-API-Key": getApiKey(),
+            "X-Client-Id": getClientId(),
+          }
+        });
+        if (cwResp.ok) {
+          const data = await cwResp.json();
+          chatwootEnabled = !!data.enabled;
+        }
+      } catch (e) {
+        console.error("[GeminiAgent] Erro ao verificar Chatwoot:", e);
+      }
+     }
+
+    if (chatwootEnabled) {
+      processedPrompt += "\n\n* Ferramenta fetch_chatwoot_history (Buscar histórico do Chatwoot): Use esta ferramenta para carregar o histórico recente de conversas por texto do cliente caso ele faça perguntas sobre o que foi falado no chat de texto anteriormente, ou se você precisar recuperar o contexto de interações passadas. Chame esta ferramenta se o cliente perguntar se você se lembra dele, se tem acesso ao chat, ou se pedir para retomar a conversa anterior.";
     }
 
     processedPrompt = processedPrompt
@@ -491,8 +527,9 @@ export class GeminiLiveAgent {
 
     this.config = {
       ...this.config,
-      systemInstruction: processedPrompt
-    };
+      systemInstruction: processedPrompt,
+      chatwootEnabled: chatwootEnabled
+    } as any;
 
     // 1. Inicializa a sessão WebSocket com o Gemini
     this.session = new GeminiLiveSession(this.config);
@@ -596,6 +633,28 @@ export class GeminiLiveAgent {
 
   async handleToolCall(name: string, args: any): Promise<any> {
     const call = useCalls.getState().calls.find((c) => c.callId === this.callId);
+
+    if (name === "fetch_chatwoot_history") {
+      console.log("[GeminiAgent] Tool fetch_chatwoot_history disparada.", args);
+      if (!call) return { error: "chamada não encontrada" };
+      try {
+        const response = await fetch(apiUrl(`/api/sessions/${call.sessionId}/chatwoot-history?phone=${encodeURIComponent(this.cleanedPhone)}`), {
+          headers: {
+            "X-API-Key": getApiKey(),
+            "X-Client-Id": getClientId(),
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.history) {
+            return { history: data.history };
+          }
+        }
+      } catch (e) {
+        console.error("[GeminiAgent] Erro ao buscar histórico do Chatwoot via tool:", e);
+      }
+      return { error: "histórico do Chatwoot não pôde ser recuperado ou não está configurado" };
+    }
 
     if (name === "hangup") {
       console.log("[GeminiAgent] Tool hangup disparada. Aguardando fim da fala...");

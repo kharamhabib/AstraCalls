@@ -56,6 +56,7 @@ type AIConfig struct {
 	CustomTools       []CustomTool      `json:"customTools"`
 	PostCall          PostCallActions   `json:"postCall"`
 	CustomFields      string            `json:"customFields"`
+	ChatwootEnabled   bool              `json:"chatwootEnabled"`
 }
 
 func (s *server) handleSetAIConfig(w http.ResponseWriter, r *http.Request) {

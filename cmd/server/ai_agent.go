@@ -51,6 +51,7 @@ type ServerAIAgent struct {
 
 // NewServerAIAgent cria e acopla um agente de IA ao CallManager.
 func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.CallManager, config AIConfig, log *slog.Logger) *ServerAIAgent {
+	config.ChatwootEnabled = sess.getChatwoot().valid()
 	agent := &ServerAIAgent{
 		sess:        sess,
 		callID:      callID,
@@ -115,6 +116,10 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 				}
 			}
 		}
+	}
+
+	if c := sess.getChatwoot(); c.valid() {
+		config.SystemInstruction += "\n\n* Ferramenta fetch_chatwoot_history (Buscar histórico do Chatwoot): Use esta ferramenta para carregar o histórico recente de conversas por texto do cliente caso ele faça perguntas sobre o que foi falado no chat de texto anteriormente, ou se você precisar recuperar o contexto de interações passadas. Chame esta ferramenta se o cliente perguntar se você se lembra dele, se tem acesso ao chat, ou se pedir para retomar a conversa anterior."
 	}
 
 	// Processa tags dinâmicas no prompt (mesmo comportamento do frontend)
@@ -424,6 +429,14 @@ func (a *ServerAIAgent) handleToolCall(ctx context.Context, name string, args ma
 		}
 
 		return map[string]any{"status": "chamado aberto com sucesso"}
+
+	case "fetch_chatwoot_history":
+		a.log.Info("[ServerAIAgent] Tool fetch_chatwoot_history disparada")
+		cleanPhone := a.resolveContactPhone(ctx)
+		if history := a.sess.fetchChatwootContext(cleanPhone); history != "" {
+			return map[string]any{"history": history}
+		}
+		return map[string]any{"error": "histórico do Chatwoot não pôde ser recuperado ou não está configurado"}
 
 	case "send_message":
 		return a.toolSendMessage(ctx, args)
