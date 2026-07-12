@@ -93,8 +93,17 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 	}
 
 	// Resolve o nome do contato de forma robusta a partir do banco de dados do WhatsApp
+	originalJidStr := peer
+	if cm != nil {
+		if info := cm.CurrentCall(); info != nil {
+			if info.PeerJid != "" {
+				originalJidStr = info.PeerJid
+			}
+		}
+	}
+
 	contactName := "Cliente"
-	if jid, err := types.ParseJID(peer); err == nil {
+	if jid, err := types.ParseJID(originalJidStr); err == nil {
 		if contact, err := sess.client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
 			if contact.FullName != "" {
 				contactName = contact.FullName
@@ -104,7 +113,10 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 				contactName = contact.PushName
 			}
 		}
-	} else {
+	}
+
+	// Se ainda for "Cliente", tenta buscar pelo peer normalizado
+	if contactName == "Cliente" {
 		if jidPhone, err := types.ParseJID(peer + "@" + types.DefaultUserServer); err == nil {
 			if contact, err := sess.client.Store.Contacts.GetContact(context.Background(), jidPhone); err == nil && contact.Found {
 				if contact.FullName != "" {
