@@ -46,7 +46,7 @@ const (
 	ctlSetUsingSmpl  = 4050
 	ctlSignalVoice   = 3001
 
-	mlowMaxOut = 5760
+	mlowMaxOut = 1920
 )
 
 var globalInitOnce sync.Once
