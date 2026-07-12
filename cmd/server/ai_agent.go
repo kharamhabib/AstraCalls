@@ -85,9 +85,35 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 		cleanPhone = sess.realPhone(jid)
 	}
 	cleanPhone = digitsOnly(cleanPhone)
-	if cleanPhone != "" && !strings.Contains(config.SystemInstruction, "CONTEXTO DA CONVERSA ANTERIOR") {
+	if cleanPhone != "" && !strings.Contains(config.SystemInstruction, "CONTEXTO DA CONVERSA ANTERIOR NO CHATWOOT:") {
 		if history := sess.fetchChatwootContext(cleanPhone); history != "" {
 			config.SystemInstruction += "\n\n" + history
+		}
+	}
+
+	// Resolve o nome do contato de forma robusta a partir do banco de dados do WhatsApp
+	contactName := "Cliente"
+	if jid, err := types.ParseJID(peer); err == nil {
+		if contact, err := sess.client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
+			if contact.FullName != "" {
+				contactName = contact.FullName
+			} else if contact.FirstName != "" {
+				contactName = contact.FirstName
+			} else if contact.PushName != "" {
+				contactName = contact.PushName
+			}
+		}
+	} else {
+		if jidPhone, err := types.ParseJID(peer + "@" + types.DefaultUserServer); err == nil {
+			if contact, err := sess.client.Store.Contacts.GetContact(context.Background(), jidPhone); err == nil && contact.Found {
+				if contact.FullName != "" {
+					contactName = contact.FullName
+				} else if contact.FirstName != "" {
+					contactName = contact.FirstName
+				} else if contact.PushName != "" {
+					contactName = contact.PushName
+				}
+			}
 		}
 	}
 
@@ -121,9 +147,12 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 
 	processed := config.SystemInstruction
 	processed = strings.ReplaceAll(processed, "[today]", nowStr)
-	processed = strings.ReplaceAll(processed, "[phone]", peer)
+	processed = strings.ReplaceAll(processed, "[phone]", cleanPhone)
 	processed = strings.ReplaceAll(processed, "[direction]", dir)
 	processed = strings.ReplaceAll(processed, "[session_name]", sess.name)
+	processed = strings.ReplaceAll(processed, "[contact_name]", contactName)
+	processed = strings.ReplaceAll(processed, "[name]", contactName)
+	processed = strings.ReplaceAll(processed, "[Nome da Pessoa]", contactName)
 	if config.CustomFields != "" {
 		processed = strings.ReplaceAll(processed, "[custom_fields]", config.CustomFields)
 	} else {

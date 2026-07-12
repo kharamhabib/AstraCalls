@@ -452,11 +452,41 @@ export class GeminiLiveAgent {
     const utcTime = new Date().toISOString();
     const now = `${localTime} (${timezoneStr}) / ${utcTime} (UTC)`;
 
+    let contactName = "Cliente";
+    let cleanedPhone = phone;
+    if (cleanedPhone.includes("@")) {
+      cleanedPhone = cleanedPhone.split("@")[0].split(":")[0].split(".")[0];
+    }
+    if (call) {
+      try {
+        const response = await fetch(apiUrl(`/api/sessions/${call.sessionId}/contacts/${encodeURIComponent(call.peer)}`), {
+          headers: {
+            "X-API-Key": getApiKey(),
+            "X-Client-Id": getClientId(),
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.name) {
+            contactName = data.name;
+          }
+          if (data && data.phone) {
+            cleanedPhone = data.phone;
+          }
+        }
+      } catch (e) {
+        console.error("[GeminiAgent] Erro ao buscar dados do contato para prompt:", e);
+      }
+    }
+
     processedPrompt = processedPrompt
       .replace(/\[today\]/g, now)
-      .replace(/\[phone\]/g, phone)
+      .replace(/\[phone\]/g, cleanedPhone)
       .replace(/\[direction\]/g, direction)
       .replace(/\[session_name\]/g, sessionName)
+      .replace(/\[contact_name\]/g, contactName)
+      .replace(/\[name\]/g, contactName)
+      .replace(/\[Nome da Pessoa\]/g, contactName)
       .replace(/\[custom_fields\]/g, this.config.customFields || "");
 
     this.config = {
