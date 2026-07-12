@@ -134,12 +134,17 @@ func extractEncFromParticipant(nodes []waBinary.Node) *waBinary.Node {
 	return nil
 }
 
-func BuildTerminateStanza(peerJid types.JID, callID string, callCreator types.JID) waBinary.Node {
+func BuildTerminateStanza(peerJid types.JID, callID string, callCreator types.JID, reason string) waBinary.Node {
+	attrs := waBinary.Attrs{"call-id": callID, "call-creator": callCreator}
+	if reason != "" {
+		attrs["reason"] = reason
+	}
 	return callWrap(peerJid, waBinary.Node{
 		Tag:   "terminate",
-		Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator},
+		Attrs: attrs,
 	})
 }
+
 
 func BuildRejectStanza(peerJid types.JID, callID string, callCreator types.JID) waBinary.Node {
 	return callWrap(peerJid, waBinary.Node{

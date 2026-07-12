@@ -226,7 +226,7 @@ func (m *CallManager) EndCall(ctx context.Context, reason core.EndCallReason) er
 		return nil
 	}
 	_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: reason})
-	node := signaling.BuildTerminateStanza(wanode.MustJID(call.PeerJid), call.CallID, wanode.MustJID(call.CallCreator))
+	node := signaling.BuildTerminateStanza(wanode.MustJID(call.PeerJid), call.CallID, wanode.MustJID(call.CallCreator), string(reason))
 	ended := call
 	m.emitState()
 	m.mu.Unlock()
