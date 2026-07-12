@@ -81,11 +81,7 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 	}
 
 	// Se a instrução de sistema não contiver o histórico do Chatwoot, resolve o histórico no backend
-	cleanPhone := peer
-	if jid, err := types.ParseJID(peer); err == nil {
-		cleanPhone = sess.realPhone(jid)
-	}
-	cleanPhone = digitsOnly(cleanPhone)
+	cleanPhone := agent.resolveContactPhone(context.Background())
 	if cleanPhone != "" && !strings.Contains(config.SystemInstruction, "CONTEXTO DA CONVERSA ANTERIOR NO CHATWOOT:") {
 		if history := sess.fetchChatwootContext(cleanPhone); history != "" {
 			config.SystemInstruction += "\n\n" + history
@@ -102,30 +98,44 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 		}
 	}
 
-	contactName := "Cliente"
+	var jidsToTry []types.JID
+
+	// 1. Tenta o JID original da chamada (pode ser LID ou PN)
 	if jid, err := types.ParseJID(originalJidStr); err == nil {
-		if contact, err := sess.client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
-			if contact.FullName != "" {
-				contactName = contact.FullName
-			} else if contact.FirstName != "" {
-				contactName = contact.FirstName
-			} else if contact.PushName != "" {
-				contactName = contact.PushName
-			}
+		jidsToTry = append(jidsToTry, jid)
+	}
+
+	// 2. Tenta o JID resoluto de telefone (PN JID)
+	if cleanPhone != "" {
+		if jid, err := types.ParseJID(cleanPhone + "@" + types.DefaultUserServer); err == nil {
+			jidsToTry = append(jidsToTry, jid)
 		}
 	}
 
-	// Se ainda for "Cliente", tenta buscar pelo peer normalizado
-	if contactName == "Cliente" {
-		if jidPhone, err := types.ParseJID(peer + "@" + types.DefaultUserServer); err == nil {
-			if contact, err := sess.client.Store.Contacts.GetContact(context.Background(), jidPhone); err == nil && contact.Found {
-				if contact.FullName != "" {
-					contactName = contact.FullName
-				} else if contact.FirstName != "" {
-					contactName = contact.FirstName
-				} else if contact.PushName != "" {
-					contactName = contact.PushName
-				}
+	// 3. Tenta o JID a partir do peer caso ele já tenha um JID válido
+	if jid, err := types.ParseJID(peer); err == nil {
+		jidsToTry = append(jidsToTry, jid)
+	}
+
+	// 4. Se o peer for só números, tenta como PN JID
+	if cleanPeer := cleanDigitsOnly(peer); cleanPeer != "" {
+		if jid, err := types.ParseJID(cleanPeer + "@" + types.DefaultUserServer); err == nil {
+			jidsToTry = append(jidsToTry, jid)
+		}
+	}
+
+	contactName := "Cliente"
+	for _, jid := range jidsToTry {
+		if contact, err := sess.client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
+			if contact.FullName != "" {
+				contactName = contact.FullName
+				break
+			} else if contact.FirstName != "" {
+				contactName = contact.FirstName
+				break
+			} else if contact.PushName != "" {
+				contactName = contact.PushName
+				break
 			}
 		}
 	}
@@ -490,16 +500,41 @@ func (a *ServerAIAgent) toolSendMessage(ctx context.Context, args map[string]any
 
 // resolveContactPhone resolve o JID do peer para retornar o número de telefone (PN) real, convertendo de LID se necessário.
 func (a *ServerAIAgent) resolveContactPhone(ctx context.Context) string {
-	jid, err := types.ParseJID(a.peer)
-	if err != nil {
-		return a.peer
+	raw := a.peer
+	if !strings.Contains(raw, "@") {
+		if a.cm != nil {
+			if info := a.cm.CurrentCall(); info != nil {
+				if info.CallerPn != "" {
+					return info.CallerPn
+				}
+				if info.PeerJid != "" && strings.Contains(info.PeerJid, "@") {
+					raw = info.PeerJid
+				}
+			}
+		}
 	}
-	if jid.Server == "lid" && a.sess.client != nil && a.sess.client.Store.LIDs != nil {
-		if pn, e := a.sess.client.Store.LIDs.GetPNForLID(ctx, jid); e == nil && !pn.IsEmpty() {
-			return pn.User
+
+	jid, err := types.ParseJID(raw)
+	if err != nil {
+		return cleanDigitsOnly(raw)
+	}
+
+	if jid.Server == "lid" {
+		if pn := a.sess.realPhone(jid); pn != "" && pn != jid.User {
+			return pn
 		}
 	}
 	return jid.User
+}
+
+func cleanDigitsOnly(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // toolScheduleCall agenda uma ligação futura.

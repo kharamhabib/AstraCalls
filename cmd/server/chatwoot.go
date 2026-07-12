@@ -85,6 +85,16 @@ func (s *Session) realPhone(jid types.JID) string {
 	if pn, err := s.client.Store.LIDs.GetPNForLID(context.Background(), jid); err == nil && pn.User != "" {
 		return pn.User
 	}
+	// Força busca no servidor do WhatsApp para resolver LID -> PN
+	if s.client != nil {
+		s.log.Info("realPhone: LID not in local DB, querying WhatsApp server", "lid", jid.String())
+		if resp, err := s.client.GetUserInfo(context.Background(), []types.JID{jid}); err == nil && resp != nil {
+			if pn2, err := s.client.Store.LIDs.GetPNForLID(context.Background(), jid); err == nil && pn2.User != "" {
+				s.log.Info("realPhone: LID resolved from WhatsApp server", "lid", jid.String(), "pn", pn2.User)
+				return pn2.User
+			}
+		}
+	}
 	// Fallback: tenta buscar no registro de chamadas ativas
 	if s.reg != nil {
 		s.reg.mu.Lock()
@@ -791,9 +801,9 @@ func (s *Session) fetchChatwootContext(phone string) string {
 		loc = time.UTC
 	}
 
-	// 1. Procura o contato pelo telefone
 	var contactID int
 	var contactName string
+	var contactMap map[string]any
 	res, code, err := cfg.req(http.MethodGet, "/contacts/search?q="+phone, nil)
 	if err != nil || code != 200 {
 		s.log.Warn("chatwoot fetch context: contact search failed", "phone", phone, "code", code, "err", err)
@@ -808,6 +818,7 @@ func (s *Session) fetchChatwootContext(phone string) string {
 		if id := asInt(m["id"]); id != 0 {
 			contactID = id
 			contactName = asStr(m["name"])
+			contactMap = m
 			break
 		}
 	}
@@ -853,15 +864,41 @@ func (s *Session) fetchChatwootContext(phone string) string {
 	}
 
 	var promptLines []string
+	promptLines = append(promptLines, "=== DADOS DO CLIENTE NO CHATWOOT ===")
 	if contactName != "" {
-		promptLines = append(promptLines, "NOME DO CLIENTE: "+contactName)
+		promptLines = append(promptLines, "Nome: "+contactName)
 	}
-	promptLines = append(promptLines, "TELEFONE DO CLIENTE: "+phone)
+	promptLines = append(promptLines, "Telefone: "+phone)
 	
+	email := ""
+	if contactMap != nil {
+		email = asStr(contactMap["email"])
+	}
+	if email == "" {
+		email = "Não informado"
+	}
+	promptLines = append(promptLines, "Email: "+email)
+
+	var customAttrLines []string
+	if contactMap != nil {
+		if ca := asMap(contactMap["custom_attributes"]); ca != nil {
+			for k, v := range ca {
+				if k == "wacalls_chat_id" || v == nil || asStr(v) == "" {
+					continue
+				}
+				customAttrLines = append(customAttrLines, fmt.Sprintf("  * %s: %v", k, v))
+			}
+		}
+	}
+	if len(customAttrLines) > 0 {
+		promptLines = append(promptLines, "Campos Personalizados:")
+		promptLines = append(promptLines, customAttrLines...)
+	}
+
 	now := time.Now().In(loc)
 	promptLines = append(promptLines, "HORÁRIO ATUAL DA LIGAÇÃO: "+now.Format("02/01/2006 15:04"))
 	promptLines = append(promptLines, "\nCONTEXTO DA CONVERSA ANTERIOR NO CHATWOOT:")
-	
+
 	msgCount := 0
 	for _, it := range latestMsgs {
 		m := asMap(it)
@@ -874,23 +911,28 @@ func (s *Session) fetchChatwootContext(phone string) string {
 			continue
 		}
 		
+		msgType := asInt(m["message_type"])
+		if msgType != 0 && msgType != 1 {
+			// Ignora mensagens de atividade/sistema (ex: Conversa resolvida)
+			continue
+		}
+
 		t := parseChatwootTime(m["created_at"])
 		var timeStr string
 		if !t.IsZero() {
-			timeStr = " (" + t.In(loc).Format("02/01 15:04") + ")"
+			timeStr = " [" + t.In(loc).Format("02/01 15:04") + "]"
 		}
 
 		senderName := "Cliente"
-		if asStr(m["message_type"]) == "outgoing" {
+		if msgType == 1 {
 			senderName = "Atendente (Você)"
 		}
-		promptLines = append(promptLines, fmt.Sprintf("-%s %s: %s", timeStr, senderName, content))
+		promptLines = append(promptLines, fmt.Sprintf("%s %s: %s", timeStr, senderName, content))
 		msgCount++
 	}
-	
+
 	if msgCount == 0 {
-		// Se não tem mensagens, ainda assim retorna o nome, telefone do cliente e horário
-		return strings.Join(promptLines[:3], "\n")
+		promptLines = append(promptLines, "[Nenhuma mensagem de conversa registrada anteriormente]")
 	}
 
 	promptLines = append(promptLines, "\nINSTRUÇÕES PARA O HISTÓRICO DE CHATWOOT:")
