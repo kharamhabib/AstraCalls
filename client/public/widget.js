@@ -267,13 +267,20 @@
       if (!isServerAI) {
         mic = await navigator.mediaDevices.getUserMedia({ audio: true });
         pc = new RTCPeerConnection({ iceServers: [] });
-        mic.getAudioTracks().forEach(function (t) {
-          pc.addTrack(t, mic);
-        });
-        pc.addTransceiver("audio", { direction: "recvonly" });
+        var tracks = mic.getAudioTracks();
+        if (tracks.length > 0) {
+          tracks.forEach(function (t) {
+            pc.addTrack(t, mic);
+          });
+        } else {
+          pc.addTransceiver("audio", { direction: "recvonly" });
+        }
         pc.ontrack = function (ev) {
           var a = document.getElementById("wacalls-audio");
           if (a) {
+            if (a.srcObject && a.srcObject.getTracks && a.srcObject.getTracks().length > 0) {
+              return;
+            }
             var stream = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
             a.srcObject = stream;
             a.play().catch(function (err) {
@@ -475,11 +482,20 @@
       if (!isServerAI) {
         mic = await navigator.mediaDevices.getUserMedia({ audio: true });
         pc = new RTCPeerConnection({ iceServers: [] });
-        mic.getAudioTracks().forEach(function (t) { pc.addTrack(t, mic); });
-        pc.addTransceiver("audio", { direction: "recvonly" });
+        var tracks = mic.getAudioTracks();
+        if (tracks.length > 0) {
+          tracks.forEach(function (t) {
+            pc.addTrack(t, mic);
+          });
+        } else {
+          pc.addTransceiver("audio", { direction: "recvonly" });
+        }
         pc.ontrack = function (ev) {
           var a = document.getElementById("wacalls-audio");
           if (a) {
+            if (a.srcObject && a.srcObject.getTracks && a.srcObject.getTracks().length > 0) {
+              return;
+            }
             var stream = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
             a.srcObject = stream;
             a.play().catch(function (err) {
