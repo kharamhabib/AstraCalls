@@ -17,7 +17,7 @@ func makeBrowserOffer(t *testing.T) string {
 	defer pc.Close()
 
 	mic, err := webrtc.NewTrackLocalStaticSample(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypePCMU, ClockRate: 8000, Channels: 1},
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2},
 		"audio", "browser-mic",
 	)
 	if err != nil {
@@ -52,9 +52,8 @@ func TestNewBridgeNegotiatesBrowserOffer(t *testing.T) {
 	}
 	defer br.Close()
 
-	lowerAnswer := strings.ToLower(answer)
-	if answer == "" || (!strings.Contains(lowerAnswer, "pcmu") && !strings.Contains(lowerAnswer, "g711") && !strings.Contains(lowerAnswer, "0 0")) {
-		t.Fatalf("answer missing or has no PCMU codec:\n%s", answer)
+	if answer == "" || !strings.Contains(answer, "opus") {
+		t.Fatalf("answer missing or has no opus codec:\n%s", answer)
 	}
 
 	if strings.Contains(answer, "m=audio 0 ") {

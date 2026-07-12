@@ -529,25 +529,23 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	browserOpus := media.NewPCMUCodec(160)
+	browserOpus, ocErr := media.NewOpusCodec(16000, 320)
+	if ocErr != nil {
+		s.log.Warn("browser Opus codec unavailable — call audio disabled", "err", ocErr)
+		browserOpus = nil
+	}
 	bridge.OnBrowserRTP = func(payload []byte) {
 		if browserOpus == nil {
 			return
 		}
-		pcm8, err := browserOpus.Decode(payload)
+		pcm16, err := browserOpus.Decode(payload)
 		if err != nil {
 			s.log.Error("OnBrowserRTP: Decode failed", "err", err)
 			return
 		}
-		if len(pcm8) == 0 {
+		if len(pcm16) == 0 {
 			s.log.Warn("OnBrowserRTP: Decode returned 0 samples")
 			return
-		}
-		// Upsample de 8kHz (browser) para 16kHz (whats) duplicando amostras
-		pcm16 := make([]float32, len(pcm8)*2)
-		for i, val := range pcm8 {
-			pcm16[i*2] = val
-			pcm16[i*2+1] = val
 		}
 		ac.cm.FeedCapturedPCM(pcm16)
 	}

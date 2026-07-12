@@ -94,10 +94,12 @@ func NewBridge(offerSDP string, log *slog.Logger) (*Bridge, string, error) {
 	br := &Bridge{pc: pc, log: log}
 
 	localTrack, err := webrtc.NewTrackLocalStaticSample(
+
 		webrtc.RTPCodecCapability{
-			MimeType:    webrtc.MimeTypePCMU,
-			ClockRate:   8000,
-			Channels:    1,
+			MimeType:    webrtc.MimeTypeOpus,
+			ClockRate:   48000,
+			Channels:    2,
+			SDPFmtpLine: "minptime=10;useinbandfec=1;stereo=0;sprop-stereo=0",
 		},
 		"audio", "wacalls",
 	)

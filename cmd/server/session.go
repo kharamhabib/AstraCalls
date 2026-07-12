@@ -144,23 +144,20 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			s.log.Debug("OnPeerAudio: inactive or missing components", "ok", ok, "has_bridge", ac.bridge != nil, "has_opus", ac.browserOpus != nil)
 			return
 		}
-		// Downsample de 16kHz (whats) para 8kHz (browser PCMU) - pega uma amostra a cada duas
-		pcm8 := make([]float32, len(pcm16)/2)
-		for i := range pcm8 {
-			pcm8[i] = pcm16[i*2]
-		}
-		fs := ac.browserOpus.FrameSize() // fs = 160 (20ms a 8kHz)
-		for off := 0; off+fs <= len(pcm8); off += fs {
-			pcmuBytes, err := ac.browserOpus.Encode(pcm8[off : off+fs])
+		// O browserOpus agora opera a 16kHz, evitando crash no resampler SILK da lib opus_mlow.
+		// Fatiamos em chunks de 320 amostras (20ms a 16kHz) para codificação segura.
+		fs := ac.browserOpus.FrameSize() // fs = 320
+		for off := 0; off+fs <= len(pcm16); off += fs {
+			opus, err := ac.browserOpus.Encode(pcm16[off : off+fs])
 			if err != nil {
 				s.log.Error("OnPeerAudio: Encode failed", "err", err)
 				continue
 			}
-			if len(pcmuBytes) == 0 {
+			if len(opus) == 0 {
 				continue
 			}
 			// Envia cada chunk de 20ms
-			err = ac.bridge.WriteOpus(pcmuBytes, 20*time.Millisecond)
+			err = ac.bridge.WriteOpus(opus, 20*time.Millisecond)
 			if err != nil {
 				s.log.Error("OnPeerAudio: WriteOpus failed", "err", err)
 			}
