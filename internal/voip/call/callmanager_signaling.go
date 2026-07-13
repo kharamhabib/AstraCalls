@@ -151,7 +151,7 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	creator := wanode.MustJID(call.CallCreator)
 	transport := waBinary.Node{
 		Tag:   "call",
-		Attrs: waBinary.Attrs{"to": peerJid, "id": signaling.GenerateCallStanzaID()},
+		Attrs: waBinary.Attrs{"to": wanode.MustJID(wanode.CleanJID(peerJid.String())), "id": signaling.GenerateCallStanzaID()},
 		Content: []waBinary.Node{{
 			Tag: "transport",
 			Attrs: waBinary.Attrs{
