@@ -133,6 +133,13 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	m.initSrtpKeysLocked()
 	hasConn := m.relay.HasConnection()
 	relayData := call.RelayData
+	if hasConn && call.StateData.State == core.CallStateConnecting {
+		if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err == nil {
+			m.emitState()
+			m.startSilenceKeepaliveLocked()
+			m.log.Info("relay already connected → active (during accept)", "call_id", call.CallID)
+		}
+	}
 	m.mu.Unlock()
 
 	m.log.Info("remote accepted call", "call_id", call.CallID, "peer", peerJid.String(),
