@@ -225,3 +225,19 @@ Para alimentar a IA com o histórico recente de conversas por texto do Chatwoot 
 ### 7.3 Ferramenta de Contexto Dinâmico (`fetch_chatwoot_history`) e Finalização da Ligação (`hangup`)
 * **Ferramenta `fetch_chatwoot_history`**: Se a integração com o Chatwoot estiver ativa, a IA (Gemini Live) recebe de forma implícita a capacidade de invocar a ferramenta `fetch_chatwoot_history`. Isso permite ao agente do Gemini buscar o histórico recente de mensagens em tempo real sob demanda, caso o cliente mencione conversas anteriores.
 * **Finalização Suave com `hangup`**: Ao acionar a ferramenta de encerramento (`hangup`), o backend Go não encerra a chamada imediatamente. Em vez disso, ele monitora o esvaziamento do buffer de áudio do Gemini (`waitForAudioFinish()`) e aplica um delay suave de 1,5 segundos para que a fala final da IA seja escutada integralmente. O frontend em TypeScript também adota esse delay suave de 1,5 segundos, evitando o corte de áudio das frases finais de despedida.
+
+---
+
+## 8. Sinalização VoIP Multi-Device e Criptografia
+
+Para que ligações entre servidores (whatsmeow ↔ whatsmeow) e contas multi-device pareadas por QR Code (que rodam como dispositivos secundários, ex: `:71`) funcionem sem rejeição estrutural por parte dos servidores da Meta:
+
+### 8.1 Regra de Ouro do "to" Raiz (CleanJID)
+* O atributo `"to"` de qualquer stanza de chamada (`<call>`) na raiz do XML **deve ser sempre o JID base limpo da conta destinatária (sem identificador de dispositivo)**. 
+* Enviar stanzas do tipo `<call to="88240136671451:71@lid">` contendo o sufixo do dispositivo na tag raiz faz com que o servidor do WhatsApp da Meta as descarte silenciosamente!
+* A regra é aplicada de forma consistente em stanzas de `preaccept`, `accept`, `mute_v2`, `receipt/accept` e no `transport` manual no backend.
+
+### 8.2 Criptografia VoIP 1-para-1 no Accept (Sem `<destination>`)
+* **Diferença de Estrutura**: Enquanto a stanza de `offer` suporta múltiplos participantes (com a tag envolvente `<destination>` contendo os elementos `<to>`), a stanza de **`accept`** representa uma aceitação de chamada direta 1-para-1.
+* **Nodes Diretos**: Os elementos de criptografia Signal de cada dispositivo (`nodes`) retornados por `CreateParticipantNodes` são inseridos **diretamente sob a tag `<accept>`**, sem nenhuma tag envolvente `<destination>`. 
+* **Escopo de Criptografia**: As chaves Signal do accept são geradas **exclusivamente para o dispositivo que originou a chamada** (`callCreator`, ex: `:71`), garantindo que o dispositivo secundário emissor consiga receber e descriptografar o accept com sucesso. A assertividade das sessões Signal com o dispositivo do criador é forçada antes de gerar o payload.
