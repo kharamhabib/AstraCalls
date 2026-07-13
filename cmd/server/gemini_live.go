@@ -34,6 +34,7 @@ type GeminiLiveClient struct {
 	onText      func(speaker, text string)
 	onToolCall  func(name string, args map[string]any) map[string]any
 	onClose     func()
+	onInterrupt func()
 
 	mu         sync.Mutex
 	transcript []TranscriptLine
@@ -50,17 +51,18 @@ func NewGeminiLiveClient(config AIConfig, log *slog.Logger) *GeminiLiveClient {
 }
 
 // Connect abre o WebSocket e envia a mensagem de setup. Bloqueia até setupComplete.
-// Connect abre o WebSocket e envia a mensagem de setup. Bloqueia até setupComplete.
 func (g *GeminiLiveClient) Connect(
 	onAudio func(pcm16 []float32),
 	onText func(speaker, text string),
 	onToolCall func(name string, args map[string]any) map[string]any,
 	onClose func(),
+	onInterrupt func(),
 ) error {
 	g.onAudioOut = onAudio
 	g.onText = onText
 	g.onToolCall = onToolCall
 	g.onClose = onClose
+	g.onInterrupt = onInterrupt
 
 	return g.connectAndSetup()
 }
@@ -469,6 +471,22 @@ func (g *GeminiLiveClient) handleMessage(msg map[string]any) {
 	sc, ok := msg["serverContent"].(map[string]any)
 	if !ok {
 		return
+	}
+
+	// Trata interrupção (se o usuário começou a falar enquanto a IA estava falando)
+	if interrupted, exists := sc["interrupted"]; exists {
+		isInterrupted := false
+		if b, ok := interrupted.(bool); ok {
+			isInterrupted = b
+		} else if interrupted != nil {
+			isInterrupted = true
+		}
+		if isInterrupted {
+			g.log.Info("[GeminiLive] Interrupção detectada da fala da IA")
+			if g.onInterrupt != nil {
+				g.onInterrupt()
+			}
+		}
 	}
 
 	// Áudio de saída da IA

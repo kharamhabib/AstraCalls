@@ -236,6 +236,13 @@ func (a *ServerAIAgent) Start(ctx context.Context) error {
 			a.log.Warn("[ServerAIAgent] Sessão Gemini fechou inesperadamente")
 			a.Detach()
 		},
+		// onInterrupt: usuário interrompeu a IA
+		func() {
+			a.queueMu.Lock()
+			a.audioQueue = nil
+			a.queueMu.Unlock()
+			a.log.Info("[ServerAIAgent] Fila de áudio de saída limpa devido a interrupção")
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("gemini connect: %w", err)

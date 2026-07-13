@@ -248,6 +248,19 @@
     tBox.scrollTop = tBox.scrollHeight;
   }
 
+  function interruptTranscript() {
+    var tBox = document.getElementById("wacalls-transcript");
+    if (!tBox) return;
+    var lastLine = tBox.lastElementChild;
+    if (lastLine && lastLine.getAttribute("data-speaker") === "ai") {
+      var textNode = lastLine.querySelector(".trans-text");
+      if (textNode && !textNode.textContent.endsWith("...")) {
+        textNode.textContent = textNode.textContent.trim() + "...";
+      }
+      lastLine.removeAttribute("data-speaker");
+    }
+  }
+
   function iceComplete(pc) {
     return new Promise(function (res) {
       if (pc.iceGatheringState === "complete") return res();
@@ -377,6 +390,9 @@
       }
       else if (msg.type === "ai-transcript") {
         addTranscript(msg.speaker, msg.text);
+      }
+      else if (msg.type === "ai-interrupted") {
+        interruptTranscript();
       }
       return;
     }

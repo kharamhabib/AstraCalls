@@ -19,6 +19,7 @@ type State = {
   setAgentActive: (callId: string, active: boolean) => void;
   setAgentInstance: (callId: string, agent: GeminiLiveAgent | null) => void;
   appendTranscription: (callId: string, speaker: "client" | "ai", text: string) => void;
+  interruptTranscription: (callId: string) => void;
   clearTranscript: (callId: string) => void;
   addScheduledInProgress: (callId: string) => void;
   removeScheduledInProgress: (callId: string) => void;
@@ -88,6 +89,21 @@ export const useAIAgents = create<State>((set, get) => ({
       }
       // Caso contrário, cria uma nova linha de turno
       const nextLines = [...lines, { speaker, text, timestamp: now }];
+      return { transcripts: { ...s.transcripts, [callId]: nextLines } };
+    }),
+  interruptTranscription: (callId) =>
+    set((s) => {
+      const lines = s.transcripts[callId] || [];
+      if (lines.length === 0) return {};
+      const nextLines = [...lines];
+      const last = nextLines[nextLines.length - 1];
+      if (last.speaker === "ai" && !last.text.endsWith("...")) {
+        nextLines[nextLines.length - 1] = {
+          ...last,
+          text: last.text.trim() + "...",
+          timestamp: new Date(0), // Força o próximo trecho a criar uma nova bolha
+        };
+      }
       return { transcripts: { ...s.transcripts, [callId]: nextLines } };
     }),
   clearTranscript: (callId) =>

@@ -67,6 +67,9 @@ export const ensureCallsWired = (): void => {
     } else if (ev.type === "ai-transcript") {
       // Transcrição em tempo real do agente server-side
       useAIAgents.getState().appendTranscription(ev.callId, ev.speaker as "client" | "ai", ev.text);
+    } else if (ev.type === "ai-interrupted") {
+      // IA foi interrompida pelo cliente
+      useAIAgents.getState().interruptTranscription(ev.callId);
     }
   });
 };
