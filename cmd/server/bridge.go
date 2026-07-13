@@ -1,10 +1,13 @@
 package main
 
 import (
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,9 +24,22 @@ var (
 	browserAPI     *webrtc.API
 )
 
-// detectPublicIP descobre o IP de saída (rota padrão) sem enviar pacotes.
-// Em rede de host num VPS com IP público na interface, isso retorna o IP público.
+// detectPublicIP descobre o IP público real do servidor.
+// Primeiro tenta via serviço externo (necessário dentro de Docker bridge onde
+// net.Dial retorna apenas o IP interno do container). Se falhar, usa a rota
+// padrão local (funciona em rede de host ou VPS sem NAT).
 func detectPublicIP() string {
+	// Tenta via serviço externo (funciona dentro de Docker bridge)
+	for _, url := range []string{
+		"https://api.ipify.org",
+		"https://ifconfig.me/ip",
+		"https://icanhazip.com",
+	} {
+		if ip := fetchPublicIP(url); ip != "" {
+			return ip
+		}
+	}
+	// Fallback: rota padrão local (funciona fora de Docker)
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
 		return ""
@@ -31,6 +47,24 @@ func detectPublicIP() string {
 	defer conn.Close()
 	if a, ok := conn.LocalAddr().(*net.UDPAddr); ok {
 		return a.IP.String()
+	}
+	return ""
+}
+
+func fetchPublicIP(url string) string {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil {
+		return ""
+	}
+	ip := strings.TrimSpace(string(body))
+	if net.ParseIP(ip) != nil {
+		return ip
 	}
 	return ""
 }
