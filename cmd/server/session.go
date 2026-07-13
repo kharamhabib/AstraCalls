@@ -342,22 +342,33 @@ func (s *Session) handleEvent(rawEvt any) {
 			"timestamp": evt.Timestamp.UnixMilli(),
 		})
 	case *events.CallOffer:
+		s.log.Info("[WAEvent] CallOffer recebido", "from", evt.From.String(), "call_id", callIDFromNode(wrapCall(evt.From, evt.Data)))
 		s.onIncomingOffer(ctx, evt)
 	case *events.CallAccept:
+		callID := callIDFromNode(wrapCall(evt.From, evt.Data))
+		s.log.Info("[WAEvent] CallAccept recebido", "from", evt.From.String(), "call_id", callID)
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
 			if currCall := ac.cm.CurrentCall(); currCall != nil && currCall.Direction == core.CallDirectionOutgoing {
+				s.log.Info("[WAEvent] Processando HandleCallAccept para chamada ativa", "call_id", callID)
 				ac.cm.HandleCallAccept(ctx, wrapCallWithPlatform(evt.From, evt.Data, evt.RemotePlatform, evt.RemoteVersion), evt.From)
+			} else {
+				s.log.Warn("[WAEvent] CallAccept ignorado: chamada não encontrada ou não é de saída", "call_id", callID)
 			}
+		} else {
+			s.log.Warn("[WAEvent] CallAccept ignorado: registro da chamada ativa não encontrado", "call_id", callID)
 		}
 	case *events.CallTransport:
+		s.log.Info("[WAEvent] CallTransport recebido", "from", evt.From.String(), "call_id", callIDFromNode(wrapCall(evt.From, evt.Data)))
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
 			ac.cm.HandleCallTransport(ctx, wrapCall(evt.From, evt.Data), evt.From)
 		}
 	case *events.CallTerminate:
+		s.log.Info("[WAEvent] CallTerminate recebido", "from", evt.From.String(), "call_id", callIDFromNode(wrapCall(evt.From, evt.Data)))
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
 			ac.cm.HandleCallTerminate(wrapCall(evt.From, evt.Data))
 		}
 	case *events.CallReject:
+		s.log.Info("[WAEvent] CallReject recebido", "from", evt.From.String(), "call_id", callIDFromNode(wrapCall(evt.From, evt.Data)))
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
 			ac.cm.HandleCallTerminate(wrapCall(evt.From, evt.Data))
 		}
