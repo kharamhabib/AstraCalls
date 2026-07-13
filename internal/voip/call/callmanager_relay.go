@@ -91,6 +91,7 @@ func (m *CallManager) cleanupMedia() {
 	m.initialTransportSent = false
 	m.outgoingPreacceptSent = false
 	m.actualPeerSet = false
+	m.peerIsServer = false
 	m.encodeBuf = nil
 	m.encodeBufPos = 0
 	m.mu.Unlock()

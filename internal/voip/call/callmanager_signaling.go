@@ -73,6 +73,9 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 			m.peerSsrcs = []uint32{media.GenerateSecureSsrc(callID, ensureDeviceJid(peer), 0)}
 		}
 	}
+	m.peerIsServer = info.PeerPlatform == "" || !isMobilePlatform(info.PeerPlatform)
+	m.log.Info("incoming call platform detected", "platform", info.PeerPlatform, "peer_is_server", m.peerIsServer)
+
 	m.initCodec()
 	if callKey != nil && len(parsed.Relays) > 0 {
 		m.initSrtpKeysLocked()
@@ -124,6 +127,9 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 		m.peerSsrcs = []uint32{media.GenerateSecureSsrc(call.CallID, peerDeviceJid, 0)}
 	}
 	m.relay.SetSubscriptionSsrc(firstSsrc(m.peerSsrcs))
+	m.peerIsServer = info.PeerPlatform == "" || !isMobilePlatform(info.PeerPlatform)
+	m.log.Info("remote accepted call platform detected", "platform", info.PeerPlatform, "peer_is_server", m.peerIsServer)
+	m.initCodec()
 	m.initSrtpKeysLocked()
 	hasConn := m.relay.HasConnection()
 	relayData := call.RelayData

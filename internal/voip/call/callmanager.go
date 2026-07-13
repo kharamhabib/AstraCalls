@@ -26,6 +26,7 @@ type CallManager struct {
 	srtpSession *media.SrtpSession
 	codec       media.Codec
 	peerCodec   media.Codec // codec alternativo para decodificar frames de outro servidor AstraCalls
+	peerIsServer bool        // indica se o peer é outro servidor
 	relay       RelayTransport
 
 	selfSsrc      uint32

@@ -19,14 +19,16 @@ func (m *CallManager) initCodec() {
 		m.codec = codec
 	}
 
-	// Cria automaticamente um codec genérico para DECODIFICAÇÃO de frames do peer.
+	// Cria automaticamente um codec genérico para DECODIFICAÇÃO de frames do peer
+	// apenas se detectarmos que o peer é outro servidor AstraCalls.
 	// O opusGeneric usa a mesma opus_decode mas SEM o flag ctlSetUsingSmpl=1,
 	// evitando o resampler SILK customizado que causa abort() fatal quando o peer
-	// é outro servidor AstraCalls. Frames de celulares também são decodificados
-	// corretamente pelo Opus padrão. O MLow fica apenas para ENCODING (envio).
-	if m.peerCodec == nil {
+	// é outro servidor. Para celulares normais, peerCodec continua nulo e usamos
+	// a decodificação MLow padrão (m.codec) para evitar ruídos.
+	if m.peerIsServer && m.peerCodec == nil {
 		if pc, pcErr := media.NewOpusCodec(16000, 960); pcErr == nil {
 			m.peerCodec = pc
+			m.log.Info("peer_is_server detectado: usando opusGeneric para decodificar frames do peer")
 		} else {
 			m.log.Warn("opusGeneric fallback unavailable — using MLow for decode (server↔server may crash)", "err", pcErr)
 		}
