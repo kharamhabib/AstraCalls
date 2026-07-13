@@ -49,7 +49,6 @@ type CallManager struct {
 	OnPeerAudio   func([]float32)
 
 	recvMu        sync.Mutex
-	codecMu       sync.Mutex // Protege chamadas ao codec CGO (opus_mlow não é thread-safe)
 	lastRtpSeq    uint16
 	rtpHistory    [64]uint16
 	rtpHistoryIdx int
