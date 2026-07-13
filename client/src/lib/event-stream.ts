@@ -24,7 +24,8 @@ export type BrokerEvent =
   | { type: "incoming"; sessionId: string; id: string; peer: string; offeredAt: number }
   | { type: "incoming-claimed"; sessionId: string; id: string; owner: string }
   | { type: "ai-agent-active"; sessionId: string; callId: string; server: boolean }
-  | { type: "ai-transcript"; sessionId: string; callId: string; speaker: string; text: string };
+  | { type: "ai-transcript"; sessionId: string; callId: string; speaker: string; text: string }
+  | { type: "ai-interrupted"; sessionId: string; callId: string };
 
 type Listener = (ev: BrokerEvent) => void;
 
