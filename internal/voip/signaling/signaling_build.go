@@ -78,11 +78,16 @@ func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, 
 }
 
 func BuildAcceptStanza(ctx context.Context, sock core.VoipSocket, callID string, callKey []byte, peerJid, callCreator types.JID, isVideo bool) (waBinary.Node, error) {
-	if err := sock.AssertSessions(ctx, []types.JID{callCreator}, true); err != nil {
-		return waBinary.Node{}, fmt.Errorf("assert creator session: %w", err)
+	creatorBase := wanode.CleanJID(callCreator.String())
+	rawDevices, err := sock.GetUSyncDevices(ctx, []types.JID{wanode.MustJID(creatorBase)})
+	if err != nil {
+		return waBinary.Node{}, fmt.Errorf("usync creator devices: %w", err)
+	}
+	if err := sock.AssertSessions(ctx, rawDevices, false); err != nil {
+		return waBinary.Node{}, fmt.Errorf("assert creator sessions: %w", err)
 	}
 
-	nodes, includeDeviceIdentity, err := sock.CreateParticipantNodes(ctx, []types.JID{callCreator}, callKey, waBinary.Attrs{"count": "0"})
+	nodes, includeDeviceIdentity, err := sock.CreateParticipantNodes(ctx, rawDevices, callKey, waBinary.Attrs{"count": "0"})
 	if err != nil {
 		return waBinary.Node{}, fmt.Errorf("encrypt accept: %w", err)
 	}
