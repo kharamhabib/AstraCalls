@@ -153,7 +153,6 @@ func BuildTerminateStanza(peerJid types.JID, callID string, callCreator types.JI
 	})
 }
 
-
 func BuildRejectStanza(peerJid types.JID, callID string, callCreator types.JID) waBinary.Node {
 	return callWrap(peerJid, waBinary.Node{
 		Tag:   "reject",
