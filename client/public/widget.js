@@ -261,12 +261,12 @@
     var isServerAI = isAI && state.serverSideAI;
     render({ inCall: true, name: state.name, phone: state.phone, status: isServerAI ? "IA conectando…" : "Conectando…", isServerAI: isServerAI });
     try {
-      var pc = null;
-      var mic = null;
+      var remoteStream = null;
 
       if (!isServerAI) {
         mic = await navigator.mediaDevices.getUserMedia({ audio: true });
         pc = new RTCPeerConnection({ iceServers: [] });
+        remoteStream = new MediaStream();
         var tracks = mic.getAudioTracks();
         if (tracks.length > 0) {
           tracks.forEach(function (t) {
@@ -278,11 +278,22 @@
         pc.ontrack = function (ev) {
           var a = document.getElementById("wacalls-audio");
           if (a) {
-            if (a.srcObject && a.srcObject.getTracks && a.srcObject.getTracks().length > 0) {
-              return;
+            if (a.srcObject !== remoteStream) {
+              a.srcObject = remoteStream;
             }
-            var stream = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
-            a.srcObject = stream;
+            if (ev.track) {
+              var existing = remoteStream.getTracks();
+              var found = false;
+              for (var i = 0; i < existing.length; i++) {
+                if (existing[i].id === ev.track.id) {
+                  found = true;
+                  break;
+                }
+              }
+              if (!found) {
+                remoteStream.addTrack(ev.track);
+              }
+            }
             a.play().catch(function (err) {
               console.error("[wacalls-widget] erro ao reproduzir audio:", err);
             });
@@ -476,12 +487,12 @@
         body: { ai: isAI },
       });
 
-      var pc = null;
-      var mic = null;
+      var remoteStream = null;
 
       if (!isServerAI) {
         mic = await navigator.mediaDevices.getUserMedia({ audio: true });
         pc = new RTCPeerConnection({ iceServers: [] });
+        remoteStream = new MediaStream();
         var tracks = mic.getAudioTracks();
         if (tracks.length > 0) {
           tracks.forEach(function (t) {
@@ -493,11 +504,22 @@
         pc.ontrack = function (ev) {
           var a = document.getElementById("wacalls-audio");
           if (a) {
-            if (a.srcObject && a.srcObject.getTracks && a.srcObject.getTracks().length > 0) {
-              return;
+            if (a.srcObject !== remoteStream) {
+              a.srcObject = remoteStream;
             }
-            var stream = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
-            a.srcObject = stream;
+            if (ev.track) {
+              var existing = remoteStream.getTracks();
+              var found = false;
+              for (var i = 0; i < existing.length; i++) {
+                if (existing[i].id === ev.track.id) {
+                  found = true;
+                  break;
+                }
+              }
+              if (!found) {
+                remoteStream.addTrack(ev.track);
+              }
+            }
             a.play().catch(function (err) {
               console.error("[wacalls-widget] erro ao reproduzir audio:", err);
             });
