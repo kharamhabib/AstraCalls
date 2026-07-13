@@ -48,7 +48,9 @@ func (m *CallManager) FeedCapturedPCM(data []float32) {
 		copy(frame, m.encodeBuf)
 		m.encodeBufPos = 0
 
+		m.codecMu.Lock()
 		opus, err := m.codec.Encode(frame)
+		m.codecMu.Unlock()
 		if err != nil {
 			m.log.Debug("encode error", "err", err)
 			continue
@@ -108,7 +110,10 @@ func (m *CallManager) startSilenceKeepaliveLocked() {
 				ready := m.codec != nil && m.rtpSession != nil && m.srtpSession != nil && hasConn
 				idle := time.Since(m.lastCaptureAt) > 120*time.Millisecond
 				if ready && idle {
-					if opus, err := m.codec.Encode(silence); err == nil {
+					m.codecMu.Lock()
+					opus, err := m.codec.Encode(silence)
+					m.codecMu.Unlock()
+					if err == nil {
 						m.sendOpusFrameLocked(opus)
 					}
 				}
@@ -172,7 +177,9 @@ func (m *CallManager) onRelayData(data []byte) {
 	if len(pkt.Payload) == 0 {
 		return
 	}
+	m.codecMu.Lock()
 	pcm, err := codec.Decode(pkt.Payload)
+	m.codecMu.Unlock()
 	if err != nil {
 		return
 	}

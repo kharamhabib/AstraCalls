@@ -141,7 +141,6 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	cm.OnPeerAudio = func(pcm16 []float32) {
 		ac, ok := s.reg.get(callID)
 		if !ok || ac.bridge == nil || ac.browserOpus == nil {
-			s.log.Debug("OnPeerAudio: inactive or missing components", "ok", ok, "has_bridge", ac.bridge != nil, "has_opus", ac.browserOpus != nil)
 			return
 		}
 		// O browserOpus agora opera a 16kHz, evitando crash no resampler SILK da lib opus_mlow.
