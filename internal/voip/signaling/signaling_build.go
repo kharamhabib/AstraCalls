@@ -95,9 +95,9 @@ func BuildAcceptStanza(ctx context.Context, sock core.VoipSocket, callID string,
 	acceptContent := []waBinary.Node{
 		{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
 		{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}},
-		{Tag: "destination", Content: nodes},
 		{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},
 	}
+	acceptContent = append(acceptContent, nodes...)
 	if includeDeviceIdentity {
 		if di, ok := sock.AccountDeviceIdentityNode(); ok {
 			acceptContent = append(acceptContent, di)
