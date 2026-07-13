@@ -73,9 +73,6 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 			m.peerSsrcs = []uint32{media.GenerateSecureSsrc(callID, ensureDeviceJid(peer), 0)}
 		}
 	}
-
-	m.peerIsServer = info.PeerPlatform == "" || !isMobilePlatform(info.PeerPlatform)
-	m.log.Info("incoming call platform detected", "platform", info.PeerPlatform, "peer_is_server", m.peerIsServer)
 	m.initCodec()
 	if callKey != nil && len(parsed.Relays) > 0 {
 		m.initSrtpKeysLocked()
@@ -127,19 +124,9 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 		m.peerSsrcs = []uint32{media.GenerateSecureSsrc(call.CallID, peerDeviceJid, 0)}
 	}
 	m.relay.SetSubscriptionSsrc(firstSsrc(m.peerSsrcs))
-	m.peerIsServer = info.PeerPlatform == "" || !isMobilePlatform(info.PeerPlatform)
-	m.log.Info("remote accepted call platform detected", "platform", info.PeerPlatform, "peer_is_server", m.peerIsServer)
-	m.initCodec()
 	m.initSrtpKeysLocked()
 	hasConn := m.relay.HasConnection()
 	relayData := call.RelayData
-	if hasConn && call.StateData.State == core.CallStateConnecting {
-		if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err == nil {
-			m.emitState()
-			m.startSilenceKeepaliveLocked()
-			m.log.Info("relay already connected → active (during accept)", "call_id", call.CallID)
-		}
-	}
 	m.mu.Unlock()
 
 	m.log.Info("remote accepted call", "call_id", call.CallID, "peer", peerJid.String(),
@@ -151,7 +138,7 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	creator := wanode.MustJID(call.CallCreator)
 	transport := waBinary.Node{
 		Tag:   "call",
-		Attrs: waBinary.Attrs{"to": wanode.MustJID(wanode.CleanJID(peerJid.String())), "id": signaling.GenerateCallStanzaID()},
+		Attrs: waBinary.Attrs{"to": peerJid, "id": signaling.GenerateCallStanzaID()},
 		Content: []waBinary.Node{{
 			Tag: "transport",
 			Attrs: waBinary.Attrs{

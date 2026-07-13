@@ -79,8 +79,3 @@ func equalBytes(a, b []byte) bool {
 	}
 	return true
 }
-
-func isMobilePlatform(platform string) bool {
-	p := strings.ToLower(platform)
-	return p == "smba" || p == "smbi" || p == "kaios" || p == "android" || p == "iphone" || p == "ios"
-}

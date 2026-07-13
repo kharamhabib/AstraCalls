@@ -10,29 +10,15 @@ import (
 )
 
 func (m *CallManager) initCodec() {
-	if m.codec == nil {
-		codec, err := media.NewMLowCodec(media.DefaultCodecOptions)
-		if err != nil {
-			m.log.Warn("MLow codec unavailable — call will run signaling-only (no audio)", "err", err)
-			return
-		}
-		m.codec = codec
+	if m.codec != nil {
+		return
 	}
-
-	// Cria o codec genérico para DECODIFICAÇÃO de frames de entrada
-	// apenas se detectarmos que o peer é outro servidor AstraCalls.
-	// O opusGeneric usa a mesma opus_decode da libopus mas SEM o flag ctlSetUsingSmpl=1,
-	// evitando o resampler SILK customizado que causa abort() fatal em stanzas incompatíveis.
-	// Para celulares normais, peerCodec continua nulo e usamos a decodificação
-	// MLow padrão (m.codec) para manter o áudio cristalino.
-	if m.peerIsServer && m.peerCodec == nil {
-		if pc, pcErr := media.NewOpusCodec(16000, 960); pcErr == nil {
-			m.peerCodec = pc
-			m.log.Info("peerCodec (opusGeneric) inicializado para decodificação segura de entrada")
-		} else {
-			m.log.Warn("opusGeneric fallback de entrada indisponível — usando MLow para decodificar (pode crashar)", "err", pcErr)
-		}
+	codec, err := media.NewMLowCodec(media.DefaultCodecOptions)
+	if err != nil {
+		m.log.Warn("MLow codec unavailable — call will run signaling-only (no audio)", "err", err)
+		return
 	}
+	m.codec = codec
 }
 
 func (m *CallManager) FeedCapturedPCM(data []float32) {
@@ -157,10 +143,6 @@ func (m *CallManager) onRelayData(data []byte) {
 	}
 
 	m.mu.Lock()
-	if m.currentCall == nil || m.currentCall.StateData.State != core.CallStateActive {
-		m.mu.Unlock()
-		return
-	}
 	if m.srtpSession == nil || m.codec == nil {
 		m.mu.Unlock()
 		return
@@ -180,10 +162,6 @@ func (m *CallManager) onRelayData(data []byte) {
 	}
 	srtp := m.srtpSession
 	codec := m.codec
-	decCodec := m.peerCodec // codec alternativo para peers servidor (evita crash SILK resampler)
-	if decCodec == nil {
-		decCodec = codec
-	}
 	m.mu.Unlock()
 
 	pkt, err := srtp.Unprotect(data)
@@ -194,26 +172,12 @@ func (m *CallManager) onRelayData(data []byte) {
 	if len(pkt.Payload) == 0 {
 		return
 	}
-	pcm, err := decCodec.Decode(pkt.Payload)
+	pcm, err := codec.Decode(pkt.Payload)
 	if err != nil {
 		return
 	}
-
-	m.mu.Lock()
-	m.recvBuf = append(m.recvBuf, pcm...)
-	frameSize := decCodec.FrameSize()
-	var framesToSend [][]float32
-	for len(m.recvBuf) >= frameSize {
-		frame := make([]float32, frameSize)
-		copy(frame, m.recvBuf[:frameSize])
-		m.recvBuf = m.recvBuf[frameSize:]
-		framesToSend = append(framesToSend, frame)
-	}
-	m.mu.Unlock()
-
+	pcm = media.NormalizeFrame(pcm, codec.FrameSize())
 	if m.OnPeerAudio != nil {
-		for _, frame := range framesToSend {
-			m.OnPeerAudio(frame)
-		}
+		m.OnPeerAudio(pcm)
 	}
 }

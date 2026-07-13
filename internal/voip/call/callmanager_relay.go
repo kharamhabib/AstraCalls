@@ -79,8 +79,6 @@ func (m *CallManager) cleanupMedia() {
 	m.mu.Lock()
 	codec := m.codec
 	m.codec = nil
-	peerCodec := m.peerCodec
-	m.peerCodec = nil
 	if m.keepaliveStop != nil {
 		close(m.keepaliveStop)
 		m.keepaliveStop = nil
@@ -91,17 +89,12 @@ func (m *CallManager) cleanupMedia() {
 	m.initialTransportSent = false
 	m.outgoingPreacceptSent = false
 	m.actualPeerSet = false
-	m.peerIsServer = false
 	m.encodeBuf = nil
 	m.encodeBufPos = 0
-	m.recvBuf = nil
 	m.mu.Unlock()
 
 	m.relay.Cleanup()
 	if codec != nil {
 		codec.Close()
-	}
-	if peerCodec != nil {
-		peerCodec.Close()
 	}
 }
