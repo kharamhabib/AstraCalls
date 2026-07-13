@@ -261,6 +261,7 @@
     var isServerAI = isAI && state.serverSideAI;
     render({ inCall: true, name: state.name, phone: state.phone, status: isServerAI ? "IA conectando…" : "Conectando…", isServerAI: isServerAI });
     try {
+      var mic = null, pc = null;
       var remoteStream = null;
 
       if (!isServerAI) {
@@ -482,6 +483,7 @@
       isServerAI: isServerAI
     };
     try {
+      var mic = null, pc = null;
       await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId + "/accept", {
         method: "POST",
         body: { ai: isAI },
