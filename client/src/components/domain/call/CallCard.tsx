@@ -203,7 +203,10 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
                 <Button
                   variant="destructive"
                   size="icon"
-                  onClick={() => endCall.mutate({ sid: call.sessionId, callId: call.callId })}
+                  onClick={() => {
+                    console.log("[CallCard] Clicou para encerrar chamada:", { sid: call.sessionId, callId: call.callId });
+                    endCall.mutate({ sid: call.sessionId, callId: call.callId });
+                  }}
                   aria-label="End call"
                 >
                   <PhoneOff className="h-4 w-4" />

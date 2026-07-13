@@ -11,6 +11,7 @@ import (
 	"wacalls/internal/voip/transport"
 	"wacalls/internal/voip/wanode"
 
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -213,7 +214,7 @@ func (m *CallManager) RejectCall(ctx context.Context, callID string, reason core
 	m.emitState()
 	m.mu.Unlock()
 
-	go func() { _, _ = m.sock.Query(ctx, node) }()
+	go func() { _, _ = m.sock.Query(context.Background(), node) }()
 	m.cleanupMedia()
 	return nil
 }
@@ -226,12 +227,37 @@ func (m *CallManager) EndCall(ctx context.Context, reason core.EndCallReason) er
 		return nil
 	}
 	_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: reason})
-	node := signaling.BuildTerminateStanza(wanode.MustJID(call.PeerJid), call.CallID, wanode.MustJID(call.CallCreator), string(reason))
+
+	var nodes []waBinary.Node
+	nodes = append(nodes, signaling.BuildTerminateStanza(wanode.MustJID(call.PeerJid), call.CallID, wanode.MustJID(call.CallCreator), string(reason)))
+
+	if call.RelayData != nil && len(call.RelayData.ParticipantJids) > 0 {
+		ourBase := wanode.CleanJID(m.ownCredJid())
+		for _, part := range call.RelayData.ParticipantJids {
+			if wanode.CleanJID(part) != ourBase {
+				nodes = append(nodes, signaling.BuildTerminateStanza(wanode.MustJID(part), call.CallID, wanode.MustJID(call.CallCreator), string(reason)))
+			}
+		}
+	}
+
 	ended := call
 	m.emitState()
 	m.mu.Unlock()
 
-	go func() { _, _ = m.sock.Query(ctx, node) }()
+	go func() {
+		for _, node := range nodes {
+			go func(n waBinary.Node) {
+				toAttr, _ := n.Attrs["to"].(types.JID)
+				res, err := m.sock.Query(context.Background(), n)
+				if err != nil {
+					m.log.Error("Failed to send terminate stanza", "to", toAttr.String(), "err", err)
+				} else if res != nil {
+					m.log.Debug("Terminate stanza ack received", "to", toAttr.String(), "xml", res.String())
+				}
+			}(node)
+		}
+	}()
+
 	if m.OnEnded != nil {
 		m.OnEnded(ended)
 	}

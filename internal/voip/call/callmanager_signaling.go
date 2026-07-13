@@ -168,7 +168,7 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 					m.log.Debug("sending accepted_elsewhere terminate to other device", "device", partDevice)
 					termNode := signaling.BuildTerminateStanza(wanode.MustJID(partDevice), call.CallID, creator, "accepted_elsewhere")
 					go func(n waBinary.Node) {
-						_, _ = m.sock.Query(ctx, n)
+						_, _ = m.sock.Query(context.Background(), n)
 					}(termNode)
 				}
 			}
@@ -252,6 +252,7 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
 		if peer := firstPeerDevice(parsed.ParticipantJids, ourBase); peer != "" {
 			m.peerSsrcs = []uint32{media.GenerateSecureSsrc(call.CallID, ensureDeviceJid(peer), 0)}
 		}
+		call.CallCreator = ourDeviceJid
 		if call.EncryptionKey != nil {
 			m.initSrtpKeysLocked()
 		}
