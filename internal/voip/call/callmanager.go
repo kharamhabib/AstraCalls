@@ -27,6 +27,7 @@ type CallManager struct {
 	codec       media.Codec
 	peerCodec   media.Codec // codec alternativo para decodificar frames de outro servidor AstraCalls
 	peerIsServer bool        // indica se o peer é outro servidor
+	recvBuf     []float32   // buffer para acumular amostras PCM recebidas do peer
 	relay       RelayTransport
 
 	selfSsrc      uint32

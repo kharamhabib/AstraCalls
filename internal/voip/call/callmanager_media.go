@@ -19,18 +19,18 @@ func (m *CallManager) initCodec() {
 		m.codec = codec
 	}
 
-	// Cria automaticamente um codec genérico para DECODIFICAÇÃO de frames do peer
+	// Cria o codec genérico para DECODIFICAÇÃO de frames de entrada
 	// apenas se detectarmos que o peer é outro servidor AstraCalls.
-	// O opusGeneric usa a mesma opus_decode mas SEM o flag ctlSetUsingSmpl=1,
-	// evitando o resampler SILK customizado que causa abort() fatal quando o peer
-	// é outro servidor. Para celulares normais, peerCodec continua nulo e usamos
-	// a decodificação MLow padrão (m.codec) para evitar ruídos.
+	// O opusGeneric usa a mesma opus_decode da libopus mas SEM o flag ctlSetUsingSmpl=1,
+	// evitando o resampler SILK customizado que causa abort() fatal em stanzas incompatíveis.
+	// Para celulares normais, peerCodec continua nulo e usamos a decodificação
+	// MLow padrão (m.codec) para manter o áudio cristalino.
 	if m.peerIsServer && m.peerCodec == nil {
 		if pc, pcErr := media.NewOpusCodec(16000, 960); pcErr == nil {
 			m.peerCodec = pc
-			m.log.Info("peer_is_server detectado: usando opusGeneric para decodificar frames do peer")
+			m.log.Info("peerCodec (opusGeneric) inicializado para decodificação segura de entrada")
 		} else {
-			m.log.Warn("opusGeneric fallback unavailable — using MLow for decode (server↔server may crash)", "err", pcErr)
+			m.log.Warn("opusGeneric fallback de entrada indisponível — usando MLow para decodificar (pode crashar)", "err", pcErr)
 		}
 	}
 }
@@ -157,6 +157,10 @@ func (m *CallManager) onRelayData(data []byte) {
 	}
 
 	m.mu.Lock()
+	if m.currentCall == nil || m.currentCall.StateData.State != core.CallStateActive {
+		m.mu.Unlock()
+		return
+	}
 	if m.srtpSession == nil || m.codec == nil {
 		m.mu.Unlock()
 		return
@@ -194,8 +198,22 @@ func (m *CallManager) onRelayData(data []byte) {
 	if err != nil {
 		return
 	}
-	pcm = media.NormalizeFrame(pcm, decCodec.FrameSize())
+
+	m.mu.Lock()
+	m.recvBuf = append(m.recvBuf, pcm...)
+	frameSize := decCodec.FrameSize()
+	var framesToSend [][]float32
+	for len(m.recvBuf) >= frameSize {
+		frame := make([]float32, frameSize)
+		copy(frame, m.recvBuf[:frameSize])
+		m.recvBuf = m.recvBuf[frameSize:]
+		framesToSend = append(framesToSend, frame)
+	}
+	m.mu.Unlock()
+
 	if m.OnPeerAudio != nil {
-		m.OnPeerAudio(pcm)
+		for _, frame := range framesToSend {
+			m.OnPeerAudio(frame)
+		}
 	}
 }

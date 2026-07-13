@@ -94,6 +94,7 @@ func (m *CallManager) cleanupMedia() {
 	m.peerIsServer = false
 	m.encodeBuf = nil
 	m.encodeBufPos = 0
+	m.recvBuf = nil
 	m.mu.Unlock()
 
 	m.relay.Cleanup()

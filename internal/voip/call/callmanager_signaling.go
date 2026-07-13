@@ -73,9 +73,9 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 			m.peerSsrcs = []uint32{media.GenerateSecureSsrc(callID, ensureDeviceJid(peer), 0)}
 		}
 	}
+
 	m.peerIsServer = info.PeerPlatform == "" || !isMobilePlatform(info.PeerPlatform)
 	m.log.Info("incoming call platform detected", "platform", info.PeerPlatform, "peer_is_server", m.peerIsServer)
-
 	m.initCodec()
 	if callKey != nil && len(parsed.Relays) > 0 {
 		m.initSrtpKeysLocked()
