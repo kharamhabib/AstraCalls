@@ -184,7 +184,7 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
 }
 
 func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
-	node := wrapCall(evt.From, evt.Data)
+	node := wrapCallWithPlatform(evt.From, evt.Data, evt.RemotePlatform, evt.RemoteVersion)
 	callID := callIDFromNode(node)
 	if callID == "" {
 		return
@@ -346,7 +346,7 @@ func (s *Session) handleEvent(rawEvt any) {
 	case *events.CallAccept:
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
 			if currCall := ac.cm.CurrentCall(); currCall != nil && currCall.Direction == core.CallDirectionOutgoing {
-				ac.cm.HandleCallAccept(ctx, wrapCall(evt.From, evt.Data), evt.From)
+				ac.cm.HandleCallAccept(ctx, wrapCallWithPlatform(evt.From, evt.Data, evt.RemotePlatform, evt.RemoteVersion), evt.From)
 			}
 		}
 	case *events.CallTransport:
