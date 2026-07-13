@@ -529,7 +529,7 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	browserOpus, ocErr := media.NewOpusCodec(16000, 320)
+	browserOpus, ocErr := media.NewOpusCodec(48000, 960)
 	if ocErr != nil {
 		s.log.Warn("browser Opus codec unavailable — call audio disabled", "err", ocErr)
 		browserOpus = nil
@@ -538,15 +538,16 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
 		if browserOpus == nil {
 			return
 		}
-		pcm16, err := browserOpus.Decode(payload)
+		pcm48, err := browserOpus.Decode(payload)
 		if err != nil {
 			s.log.Error("OnBrowserRTP: Decode failed", "err", err)
 			return
 		}
-		if len(pcm16) == 0 {
+		if len(pcm48) == 0 {
 			s.log.Warn("OnBrowserRTP: Decode returned 0 samples")
 			return
 		}
+		pcm16 := media.Downsample48to16(pcm48)
 		ac.cm.FeedCapturedPCM(pcm16)
 	}
 	bridge.OnTerminalICE = func() {
