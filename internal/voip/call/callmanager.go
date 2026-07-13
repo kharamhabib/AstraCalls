@@ -25,6 +25,7 @@ type CallManager struct {
 	rtpSession  *media.RtpSession
 	srtpSession *media.SrtpSession
 	codec       media.Codec
+	peerCodec   media.Codec // codec alternativo para decodificar frames de outro servidor AstraCalls
 	relay       RelayTransport
 
 	selfSsrc      uint32
@@ -88,6 +89,15 @@ func NewCallManager(sock core.VoipSocket, log *slog.Logger) *CallManager {
 	relay.SetOnReceive(func(data []byte) { m.onRelayData(data) })
 	m.relay = relay
 	return m
+}
+
+// SetPeerCodec injeta um codec alternativo para decodificar frames do peer.
+// Quando setado, onRelayData usará este codec em vez do MLow, evitando o crash
+// do SILK resampler em chamadas servidor↔servidor.
+func (m *CallManager) SetPeerCodec(c media.Codec) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.peerCodec = c
 }
 
 func (m *CallManager) CurrentCall() *CallInfo {

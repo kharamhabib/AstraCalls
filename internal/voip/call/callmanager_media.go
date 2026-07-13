@@ -10,15 +10,27 @@ import (
 )
 
 func (m *CallManager) initCodec() {
-	if m.codec != nil {
-		return
+	if m.codec == nil {
+		codec, err := media.NewMLowCodec(media.DefaultCodecOptions)
+		if err != nil {
+			m.log.Warn("MLow codec unavailable — call will run signaling-only (no audio)", "err", err)
+			return
+		}
+		m.codec = codec
 	}
-	codec, err := media.NewMLowCodec(media.DefaultCodecOptions)
-	if err != nil {
-		m.log.Warn("MLow codec unavailable — call will run signaling-only (no audio)", "err", err)
-		return
+
+	// Cria automaticamente um codec genérico para DECODIFICAÇÃO de frames do peer.
+	// O opusGeneric usa a mesma opus_decode mas SEM o flag ctlSetUsingSmpl=1,
+	// evitando o resampler SILK customizado que causa abort() fatal quando o peer
+	// é outro servidor AstraCalls. Frames de celulares também são decodificados
+	// corretamente pelo Opus padrão. O MLow fica apenas para ENCODING (envio).
+	if m.peerCodec == nil {
+		if pc, pcErr := media.NewOpusCodec(16000, 960); pcErr == nil {
+			m.peerCodec = pc
+		} else {
+			m.log.Warn("opusGeneric fallback unavailable — using MLow for decode (server↔server may crash)", "err", pcErr)
+		}
 	}
-	m.codec = codec
 }
 
 func (m *CallManager) FeedCapturedPCM(data []float32) {
@@ -162,6 +174,10 @@ func (m *CallManager) onRelayData(data []byte) {
 	}
 	srtp := m.srtpSession
 	codec := m.codec
+	decCodec := m.peerCodec // codec alternativo para peers servidor (evita crash SILK resampler)
+	if decCodec == nil {
+		decCodec = codec
+	}
 	m.mu.Unlock()
 
 	pkt, err := srtp.Unprotect(data)
@@ -172,11 +188,11 @@ func (m *CallManager) onRelayData(data []byte) {
 	if len(pkt.Payload) == 0 {
 		return
 	}
-	pcm, err := codec.Decode(pkt.Payload)
+	pcm, err := decCodec.Decode(pkt.Payload)
 	if err != nil {
 		return
 	}
-	pcm = media.NormalizeFrame(pcm, codec.FrameSize())
+	pcm = media.NormalizeFrame(pcm, decCodec.FrameSize())
 	if m.OnPeerAudio != nil {
 		m.OnPeerAudio(pcm)
 	}
