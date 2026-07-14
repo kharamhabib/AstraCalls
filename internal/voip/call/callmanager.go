@@ -216,8 +216,7 @@ func (m *CallManager) AcceptCall(ctx context.Context, callID string) error {
 					if partDevice != ourDevice {
 						m.log.Debug("sending accepted_elsewhere terminate to own other device", "device", partDevice)
 						termNode := signaling.BuildTerminateStanza(wanode.MustJID(partDevice), callID, creator, "accepted_elsewhere")
-						_, err := m.sock.Query(context.Background(), termNode)
-						if err != nil {
+						if err := m.sock.SendNode(context.Background(), termNode); err != nil {
 							m.log.Error("failed to send accepted_elsewhere to own device", "device", partDevice, "err", err)
 						}
 					}

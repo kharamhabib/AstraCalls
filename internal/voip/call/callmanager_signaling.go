@@ -189,7 +189,9 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 					m.log.Debug("sending accepted_elsewhere terminate to other device", "device", partDevice)
 					termNode := signaling.BuildTerminateStanza(wanode.MustJID(partDevice), call.CallID, creator, "accepted_elsewhere")
 					go func(n waBinary.Node) {
-						_, _ = m.sock.Query(context.Background(), n)
+						if err := m.sock.SendNode(context.Background(), n); err != nil {
+							m.log.Error("failed to send accepted_elsewhere terminate", "device", partDevice, "err", err)
+						}
 					}(termNode)
 				}
 			}
