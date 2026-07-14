@@ -208,7 +208,7 @@ func (m *CallManager) AcceptCall(ctx context.Context, callID string) error {
 
 		// Frente 1: Notifica nossos próprios outros dispositivos para pararem de tocar
 		ourBase := wanode.CleanJID(m.ownCredJid())
-		ourDevice := ensureDeviceJid(m.ownCredJid())
+		ourDevice := ensureDeviceJid(findOurDevice(relayData.ParticipantJids, ourBase, m.ownCredJid()))
 		go func() {
 			for _, part := range relayData.ParticipantJids {
 				if wanode.CleanJID(part) == ourBase {
