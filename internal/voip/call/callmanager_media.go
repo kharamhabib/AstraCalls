@@ -169,6 +169,10 @@ func (m *CallManager) onRelayData(data []byte) {
 			go m.relay.ResendSubscriptions()
 		}
 	}
+	if !containsSsrc(m.peerSsrcs, ssrc) {
+		m.mu.Unlock()
+		return
+	}
 	srtp := m.srtpSession
 	codec := m.codec
 	m.mu.Unlock()

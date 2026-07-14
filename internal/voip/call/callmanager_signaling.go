@@ -119,10 +119,9 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	_ = call.ApplyTransition(Transition{Type: TransitionRemoteAccepted})
 	m.emitState()
 	m.acceptedByJid = peerJid.String()
-	if m.peerSsrcs == nil || !m.actualPeerSet {
-		peerDeviceJid := ensureDeviceJid(peerJid.String())
-		m.peerSsrcs = []uint32{media.GenerateSecureSsrc(call.CallID, peerDeviceJid, 0)}
-	}
+	peerDeviceJid := ensureDeviceJid(peerJid.String())
+	m.peerSsrcs = []uint32{media.GenerateSecureSsrc(call.CallID, peerDeviceJid, 0)}
+	m.actualPeerSet = true
 	m.relay.SetSubscriptionSsrc(firstSsrc(m.peerSsrcs))
 	m.initSrtpKeysLocked()
 	if m.codec != nil {

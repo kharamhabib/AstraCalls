@@ -1,6 +1,7 @@
 # Handoff e Status de Atualização: Ligação de Servidor para Servidor (VoIP)
 
 ## 📌 Contexto Geral
+
 Estamos trabalhando na resolução de chamadas VoIP de **Servidor para Servidor** (whatsmeow ↔ whatsmeow).
 Em ligações de Servidor para Celular, tudo funciona 100%. No entanto, de Servidor para Servidor, a chamada no Servidor A (iniciador) ficava presa tocando ("ringing"), enquanto o Servidor B (VPS, que atende) aceitava a chamada e iniciava a conversação da IA.
 
@@ -35,7 +36,7 @@ Em ligações de Servidor para Celular, tudo funciona 100%. No entanto, de Servi
 ---
 
 ## ⚠️ O que NÃO deve ser feito (Restrições)
-* **Não fazer commits ou git operations automáticas**: Isto é restrição estrita do desenvolvedor humano.
-* **Não recolocar a tag `<destination>` no accept**: Confirmamos que o accept VoIP 1-para-1 é direto e não a utiliza.
-* **Não remover o `CleanJID` das stanzas `<call>` raiz**: A Meta rejeita as stanzas estruturalmente se elas forem enviadas com dispositivo no `"to"` principal.
-* **Não usar IDs de dispositivo fixos no código**: A Meta gera IDs reativos altos para LIDs pareados via QR Code (como `:71` ou `:99`). O código deve tratá-los de forma dinâmica.
+
+- **Não recolocar a tag `<destination>` no accept**: Confirmamos que o accept VoIP 1-para-1 é direto e não a utiliza.
+- **Não remover o `CleanJID` das stanzas `<call>` raiz**: A Meta rejeita as stanzas estruturalmente se elas forem enviadas com dispositivo no `"to"` principal.
+- **Não usar IDs de dispositivo fixos no código**: A Meta gera IDs reativos altos para LIDs pareados via QR Code (como `:71` ou `:99`). O código deve tratá-los de forma dinâmica.
