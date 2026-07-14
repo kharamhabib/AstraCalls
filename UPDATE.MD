@@ -265,10 +265,34 @@ Durante os testes reais de chamadas de servidor para servidor e celular para ser
     *   Implementamos nos decodificadores `mlowCodec` e `opusGeneric` no [mlow_codec_real.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_real.go) a verificação do tamanho do frame recebido: `if frame != nil && len(frame) < 10`.
     	*   Qualquer payload menor de 10 bytes (que nunca é um pacote de áudio Opus real) é **descartado antecipadamente no nível do Go**, retornando silêncio (`make([]float32, frameSize)`) e erro nulo. Isso impede que os pings nativos alcancem a C-API do Opus, blindando o servidor local localmente de forma definitiva.
 
-### 5. Rejeição de Stanzas VoIP por Presença de Device JID no "to" Principal do <call>
-*   **Problema**: O WhatsApp rejeita silenciosamente qualquer stanza cuja tag raiz `<call>` tenha um JID contendo sufixo de dispositivo (como `:0` ou `:2`) no atributo `to`. Para fins de roteamento e envio do sinal `accepted_elsewhere` aos outros dispositivos do próprio usuário, passávamos o JID com dispositivo (`partDevice`) para `BuildTerminateStanza`, resultando em `<call to="...:0@lid">`, que era sumariamente descartada pelos servidores da Meta.
+### 5. Roteamento de JID de Destino: CleanJID vs. Device JID Completo nas Stanzas
+*   **Problema**: 
+    1.  O WhatsApp rejeita silenciosamente stanzas de terminação/recusa (`terminate`, `reject`) cujo JID de destino no atributo `"to"` do nó raiz `<call>` contenha um sufixo de dispositivo (ex: `:0` ou `:2`). Ao tentarmos enviar a notificação `accepted_elsewhere` para outros aparelhos do receptor, passávamos o JID com dispositivo, resultando em descarte silencioso pela rede da Meta.
+    2.  Por outro lado, stanzas de negociação de sessão de chamada (`accept`, `preaccept`) **não** podem ter seu JID limpo. Elas devem ser encaminhadas ao JID do dispositivo específico (ex: `:71`) que iniciou a chamada. Se aplicássemos `CleanJID` nessas stanzas, a rede da Meta entregava a resposta de aceite apenas para o dispositivo primário `:0` do chamador, fazendo com que o servidor companion chamador nunca recebesse a sinalização de `accept`, impedindo que ele processasse o estado de conectado e disparasse o comando para o celular receptor parar de tocar.
 *   **Solução**:
-    *   Atualizamos as funções `BuildTerminateStanza`, `BuildRejectStanza` e `BuildPreacceptStanza` em [signaling_build.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/signaling/signaling_build.go) para sempre limpar o JID de destino (aplicando `wanode.CleanJID`), mantendo o atributo `"to"` da tag `<call>` raiz sempre com o JID base. O roteador do WhatsApp se encarrega de encaminhar a todos os dispositivos vinculados apropriadamente.
+    *   Mantivemos as funções `BuildTerminateStanza` e `BuildRejectStanza` limpando o JID de destino com `wanode.CleanJID` na raiz `<call to="...">` (permitindo o roteamento correto e encerramento do toque nos outros dispositivos).
+    *   Restauramos `BuildAcceptStanza` e `BuildPreacceptStanza` em [signaling_build.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/signaling/signaling_build.go) para usar o `peerJid` completo (com sufixo de dispositivo do chamador intacto). Isso garantiu a recepção correta do aceite pelo servidor e a interrupção correspondente do ringtone no celular callee.
+
+### 6. Identificação de Chamadas Servidor-Servidor (AstraCalls)
+*   **Finalidade**: Identificar se uma chamada recebida provém de outro servidor executando nossa aplicação (AstraCalls) ao invés de um celular oficial, permitindo criar lógicas automáticas para ignorar ou recusar a chamada caso desejado.
+*   **Assinatura Protocolar**:
+    1.  **Lista de Codecs Simplificada (Sem MLow)**: No método `BuildOfferStanza` de nossa aplicação, os únicos codecs oferecidos na tag de áudio são `opus` (em 8k e 16k). Um cliente oficial do WhatsApp (Android/iOS) sempre oferece o codec proprietário da Meta `mlow` para chamadas 1:1. Portanto, a ausência de `<audio enc="mlow">` no `<offer>` recebido é um forte indício de chamada automatizada via servidor.
+    2.  **Dispositivo de Origem (Companion Device)**: O iniciador da chamada (`call-creator`) em servidores parceiros Whatsmeow utiliza credenciais configuradas como dispositivo vinculado (companheiro), o que insere um sufixo `:X` com `X > 0` (ex: `:2@lid` ou `:71@lid`) no JID, enquanto celulares de usuários finais costumam iniciar chamadas de seu dispositivo principal (`:0@lid` ou sem sufixo).
+*   **Exemplo de Implementação**:
+    ```go
+    func IsAstraCallsServerOffer(offerNode *waBinary.Node) bool {
+        hasMlow := false
+        for _, child := range wanode.NodeChildren(offerNode) {
+            if child.Tag == "audio" {
+                if enc := wanode.AttrString(child.Attrs, "enc"); enc == "mlow" {
+                    hasMlow = true
+                    break
+                }
+            }
+        }
+        return !hasMlow
+    }
+    ```
 
 ---
 
