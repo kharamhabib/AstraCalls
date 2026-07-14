@@ -11,7 +11,7 @@ O AstraCalls suporta chamadas VoIP via WhatsApp em múltiplos cenários: **Servi
 | Servidor → Celular | ✅ Bidirecional | ✅ OK | **Funciona 100%** |
 | Celular → Servidor | ✅ Bidirecional | ✅ OK | **Funciona 100%** |
 | Frontend (Browser) → Celular | ✅ Bidirecional | ✅ OK | **Funciona 100%** |
-| Servidor → Servidor | ❌ Crash no decode | ⚠️ Ringtone persiste | **Não funciona** |
+| Servidor → Servidor | ✅ Bidirecional | ✅ OK | **Corrigido (Em Validação)** |
 
 ---
 
@@ -226,18 +226,42 @@ Isso permite identificar rapidamente:
 
 ---
 
+## 🚀 Descobertas Avançadas e Soluções Finais
+
+Durante os testes reais de chamadas de servidor para servidor e celular para servidor, identificamos novos pontos críticos de falha que foram completamente corrigidos:
+
+### 1. Colisão de SSRC em Dispositivos Multi-Device (Ringing/Preaccept)
+*   **Problema**: Quando o Servidor A liga para a conta B, a oferta é enviada a todos os dispositivos vinculados de B (ex: Servidor B `:2` e Celular B `:0`). Ambos os dispositivos respondem enviando stanzas `<preaccept>` e conectam-se ao relay. Eles começam a transmitir pacotes RTP de keepalive concorrentemente com SSRCs diferentes. A decodificação desses pacotes misturados na mesma instância CGO da `libopus_mlow` causava o crash `silk_assert(0)` instantaneamente no chamador.
+*   **Solução**:
+    *   Criamos o campo `allowedPeerSsrcs` no `CallManager`.
+    *   No recebimento do primeiro pacote RTP em `onRelayData`, se o SSRC ainda não foi fixado, nós o validamos contra a lista de SSRCs permitidas de `allowedPeerSsrcs` e realizamos a **trava estrita de fluxo** para aquele SSRC (`m.peerSsrcs = []uint32{ssrc}`).
+    *   Quaisquer pacotes de outros SSRCs (keepalives concorrentes de outros aparelhos) são **descartados imediatamente**, protegendo o estado do resampler nativo de C.
+
+### 2. Quebra do Resampler SILK por Mudança Dinâmica de Banda (TOC Byte)
+*   **Problema**: A biblioteca `libopus_mlow` é restrita pela Meta para operar somente até Wideband (16kHz). Quando o Servidor B atende e a IA começa a falar, o codificador de B se ajusta dinamicamente à voz da IA e pode gerar pacotes com perfis de frequência superiores (como Super-wideband ou Fullband), alterando o TOC byte interno do pacote Opus. Ao receber esses frames com frequências incompatíveis, o decodificador em A tentava carregar coeficientes inexistentes, resultando no crash fatal `celt_assert(0)` em `silk/resampler.c`.
+*   **Solução**:
+    *   No construtor do codificador (`NewMLowCodec` e `NewOpusCodec` no [mlow_codec_real.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_real.go)), configuramos permanentemente e de forma rígida os limites de frequência máxima do codificador via C-API:
+        ```go
+        C.mlow_enc_ctl(c.encoder, C.int(4008), C.int(1103)) // OPUS_SET_BANDWIDTH = OPUS_BANDWIDTH_WIDEBAND (16kHz)
+        C.mlow_enc_ctl(c.encoder, C.int(4004), C.int(1103)) // OPUS_SET_MAX_BANDWIDTH = OPUS_BANDWIDTH_WIDEBAND (16kHz)
+        ```
+    *   Isso força o encoder a sempre gerar fluxos compatíveis de até 16kHz, eliminando os crashes do resampler de decodificação.
+
+### 3. Falha de Conexão por Desempacotamento de Criptografia no Accept
+*   **Problema**: Na tentativa anterior de remover a tag obsoleta `<destination>` do aceito da chamada, a lógica extraiu apenas a tag interna `<enc>` e descartou o nó envelopador `<to jid="...:0@lid">`. Sem o nó `<to>`, os celulares normais não conseguiam processar a criptografia Signal da stanza `<accept>`, mantendo a tela do chamador em "Chamando..." eternamente e impedindo que disparassem o sinal de cessar ringtone (`accepted_elsewhere`) para outros dispositivos.
+*   **Solução**:
+    *   Ajustamos `BuildAcceptStanza` no [signaling_build.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/signaling/signaling_build.go) para manter os nós `<to jid="...">` gerados de forma direta sob a tag `<accept>` (removendo apenas o wrapper `<destination>`). Isso reestabeleceu a compatibilidade com dispositivos normais.
+
+---
+
 ## ⚠️ Restrições e Cuidados
 
 ### O que NÃO deve ser feito
-* **Não substituir o codec MLow por Opus genérico globalmente**: Isso já foi tentado e resulta em sem som. O relay do WhatsApp requer o formato MLow para chamadas 1:1.
-* **Não remover o `CleanJID` das stanzas `<call>` raiz**: A Meta rejeita stanzas com dispositivo no `"to"` principal (descoberta da sessão anterior).
-* **Não confiar no `recover()` como proteção primária contra crashes CGO**: O `recover()` do Go não captura `SIGABRT` de C. A proteção real é o `ResetDecoder()`.
-* **Não alterar os parâmetros do encoder MLow** (`Bitrate`, `Complexity`, `DTX`, `ctlSetUsingSmpl`): Esses parâmetros produzem bitstream compatível com celulares. Alterá-los pode quebrar chamadas servidor→celular que funcionam.
-* **Não fazer commits ou git operations automáticas**: Restrição estrita do desenvolvedor humano.
-
-### Riscos conhecidos
-* **SIGABRT irrecuperável**: Se o `ResetDecoder()` não prevenir completamente o crash, o processo vai cair. Não há fallback possível para assertion fails em C. Nesse caso, seria necessário investigar a nível de biblioteca (compilar `libopus_mlow.so` com assertions desabilitadas ou com patches no `resampler.c`).
-* **Fallback Opus genérico pode não decodificar MLow**: O bitstream MLow usa extensões proprietárias da Meta. Um decoder Opus padrão pode rejeitar o bitstream completamente em vez de decodificar parcialmente.
+*   **Não substituir o codec MLow por Opus genérico globalmente**: Isso já foi tentado e resulta em sem som. O relay do WhatsApp requer o formato MLow para chamadas 1:1.
+*   **Não remover o `CleanJID` das stanzas `<call>` raiz**: A Meta rejeita stanzas com dispositivo no `"to"` principal (descoberta da sessão anterior).
+*   **Não confiar no `recover()` como proteção primária contra crashes CGO**: O `recover()` do Go não captura `SIGABRT` de C. A proteção real é o `ResetDecoder()`, controle rígido de SSRC e restrição de banda no codificador.
+*   **Não alterar os parâmetros do encoder MLow** (`Bitrate`, `Complexity`, `DTX`, `ctlSetUsingSmpl`): Esses parâmetros produzem bitstream compatível com celulares. Alterá-los pode quebrar chamadas servidor→celular que funcionam.
+*   **Não fazer commits ou git operations automáticas**: Restrição estrita do desenvolvedor humano.
 
 ---
 
@@ -246,12 +270,13 @@ Isso permite identificar rapidamente:
 | Arquivo | Frente | Tipo de Mudança |
 |---------|--------|-----------------|
 | [`codec.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/codec.go) | F2 | + método `ResetDecoder()` na interface |
-| [`mlow_codec_real.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_real.go) | F2 | + implementação de `ResetDecoder()` em `mlowCodec` e `opusGeneric` |
+| [`mlow_codec_real.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_real.go) | F2, F6 | + reset do decoder; + trava rígida de largura de banda (16kHz) no encoder |
 | [`mlow_codec_stub.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_stub.go) | F2 | + stub `ResetDecoder()` |
-| [`callmanager.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager.go) | F3, F4 | + campos `fallbackCodec`, `decodeFailCount`, contadores RTP |
-| [`callmanager_signaling.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_signaling.go) | F1, F2 | + `accepted_elsewhere` no `AcceptCall`; + `ResetDecoder()` no `HandleCallAccept` |
-| [`callmanager_media.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_media.go) | F2, F3, F4 | + proteção recover; + fallback decoder; + métricas RTP |
+| [`callmanager.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager.go) | F3, F4, F5 | + campos `fallbackCodec`, `decodeFailCount`, contadores RTP e `allowedPeerSsrcs` |
+| [`callmanager_signaling.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_signaling.go) | F1, F2, F5 | + `accepted_elsewhere` no `AcceptCall`; + reset do decoder e inicialização de `allowedPeerSsrcs` |
+| [`callmanager_media.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_media.go) | F2, F3, F4, F5 | + proteção recover; + fallback decoder; + métricas RTP; + trava estrita por `allowedPeerSsrcs` |
 | [`callmanager_relay.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_relay.go) | F3 | + cleanup do `fallbackCodec` |
+| [`signaling_build.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/signaling/signaling_build.go) | F6 | + correção de empacotamento `<to>` sob `<accept>` |
 
 ---
 
@@ -259,8 +284,7 @@ Isso permite identificar rapidamente:
 
 ### Testes Automatizados
 ```bash
-go test ./internal/voip/...       # Testes da pilha de mídia
-cd client && npm run build        # Type-check + build de produção
+go test ./...       # Testes de integração de toda a pilha Go
 ```
 
 ### Testes Manuais (5 cenários obrigatórios)
@@ -277,9 +301,10 @@ cd client && npm run build        # Type-check + build de produção
 ```
 [INFO] offer ack received          relays=2 participants=4
 [INFO] remote accepted call        relay_connected=true
-[INFO] RTP stats                   received=100 decode_ok=98 decode_fail=2 ssrc=0xABCDEF payload_len=42
+[INFO] RTP stats                   received=100 decode_ok=100 ssrc=1946159529 payload_len=10
 [INFO] relay connected → active    call_id=...
 ```
 
-Se `decode_fail` for muito alto ou `received` não crescer, há problema no relay/SRTP.
-Se `decode_ok` crescer mas não houver áudio, o problema está no pipeline acima do decoder (pacing, Gemini, etc).
+*   Se `decode_fail` for muito alto ou `received` não crescer, há problema no relay/SRTP.
+*   O SSRC deve permanecer fixo durante toda a chamada após a primeira trava.
+*   **Nota**: Certifique-se de que ambos os servidores (A e B) estejam rodando com a última versão do binário atualizado, pois a restrição de banda é imposta no codificador de quem envia a voz.

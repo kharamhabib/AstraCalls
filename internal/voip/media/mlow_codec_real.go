@@ -133,6 +133,13 @@ func (c *mlowCodec) Decode(frame []byte) ([]float32, error) {
 	if frame == nil {
 		n = C.opus_decode(c.decoder, nil, 0, &out[0], C.int(mlowFrameSize), 0)
 	} else {
+		if len(frame) > 0 {
+			toc := frame[0]
+			config := toc >> 3
+			if config >= 12 {
+				return make([]float32, mlowFrameSize), fmt.Errorf("unsupported mlow bandwidth config: %d", config)
+			}
+		}
 		cdata := (*C.uchar)(unsafe.Pointer(&frame[0]))
 		n = C.opus_decode(c.decoder, cdata, C.int32_t(len(frame)), &out[0], C.int(mlowMaxOut), 0)
 	}
