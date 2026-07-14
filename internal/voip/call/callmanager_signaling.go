@@ -62,15 +62,23 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	}
 	m.selfSsrc = media.GenerateSecureSsrc(callID, sj, 0)
 	m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrc)
-	m.peerSsrcs = []uint32{media.GenerateSecureSsrc(callID, peerJid.String(), 0)}
+	m.peerSsrcs = []uint32{}
+	m.allowedPeerSsrcs = []uint32{
+		media.GenerateSecureSsrc(callID, peerJid.String(), 0),
+		media.GenerateSecureSsrc(callID, ensureDeviceJid(peerJid.String()), 0),
+	}
+	m.actualPeerSet = false
 	// SSRC/SRTP a partir dos participantes do relay (igual à saída em HandleCallAck)
 	ourBase := wanode.CleanJID(m.ownCredJid())
 	if len(parsed.ParticipantJids) > 0 {
 		ourDeviceJid := ensureDeviceJid(findOurDevice(parsed.ParticipantJids, ourBase, m.ownCredJid()))
 		m.selfSsrc = media.GenerateSecureSsrc(callID, ourDeviceJid, 0)
 		m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrc)
-		if peer := firstPeerDevice(parsed.ParticipantJids, ourBase); peer != "" {
-			m.peerSsrcs = []uint32{media.GenerateSecureSsrc(callID, ensureDeviceJid(peer), 0)}
+		m.allowedPeerSsrcs = []uint32{}
+		for _, part := range parsed.ParticipantJids {
+			if wanode.CleanJID(part) != ourBase {
+				m.allowedPeerSsrcs = append(m.allowedPeerSsrcs, media.GenerateSecureSsrc(callID, ensureDeviceJid(part), 0))
+			}
 		}
 	}
 	m.initCodec()
@@ -119,8 +127,11 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	_ = call.ApplyTransition(Transition{Type: TransitionRemoteAccepted})
 	m.emitState()
 	m.acceptedByJid = peerJid.String()
-	peerDeviceJid := ensureDeviceJid(peerJid.String())
-	m.peerSsrcs = []uint32{media.GenerateSecureSsrc(call.CallID, peerDeviceJid, 0)}
+	peerJidStr := peerJid.String()
+	peerDeviceJid := ensureDeviceJid(peerJidStr)
+	activeSsrc := media.GenerateSecureSsrc(call.CallID, peerDeviceJid, 0)
+	m.peerSsrcs = []uint32{activeSsrc}
+	m.allowedPeerSsrcs = []uint32{activeSsrc}
 	m.actualPeerSet = true
 	m.relay.SetSubscriptionSsrc(firstSsrc(m.peerSsrcs))
 	m.initSrtpKeysLocked()
@@ -251,9 +262,14 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
 			m.selfSsrc = newSelf
 			m.rtpSession = media.NewWhatsAppOpusSession(newSelf)
 		}
-		if peer := firstPeerDevice(parsed.ParticipantJids, ourBase); peer != "" {
-			m.peerSsrcs = []uint32{media.GenerateSecureSsrc(call.CallID, ensureDeviceJid(peer), 0)}
+		m.peerSsrcs = []uint32{}
+		m.allowedPeerSsrcs = []uint32{}
+		for _, part := range parsed.ParticipantJids {
+			if wanode.CleanJID(part) != ourBase {
+				m.allowedPeerSsrcs = append(m.allowedPeerSsrcs, media.GenerateSecureSsrc(call.CallID, ensureDeviceJid(part), 0))
+			}
 		}
+		m.actualPeerSet = false
 		call.CallCreator = ourDeviceJid
 		if call.EncryptionKey != nil {
 			m.initSrtpKeysLocked()

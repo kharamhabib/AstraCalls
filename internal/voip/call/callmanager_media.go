@@ -162,8 +162,8 @@ func (m *CallManager) onRelayData(data []byte) {
 		return
 	}
 	if !m.actualPeerSet {
-		m.actualPeerSet = true
-		if !containsSsrc(m.peerSsrcs, ssrc) {
+		if containsSsrc(m.allowedPeerSsrcs, ssrc) {
+			m.actualPeerSet = true
 			m.peerSsrcs = []uint32{ssrc}
 			m.relay.SetSubscriptionSsrc(ssrc)
 			go m.relay.ResendSubscriptions()

@@ -32,9 +32,10 @@ type CallManager struct {
 	rtpRecvCount    uint64
 	decodeOkCount   uint64
 
-	selfSsrc      uint32
-	peerSsrcs     []uint32
-	actualPeerSet bool
+	selfSsrc          uint32
+	peerSsrcs         []uint32
+	allowedPeerSsrcs  []uint32
+	actualPeerSet     bool
 
 	firstPacketSent       bool
 	initialTransportSent  bool
@@ -134,7 +135,9 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 	selfJid := creator.String()
 	m.selfSsrc = media.GenerateSecureSsrc(callID, selfJid, 0)
 	m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrc)
-	m.peerSsrcs = []uint32{media.GenerateSecureSsrc(callID, resolved.String(), 0)}
+	m.peerSsrcs = []uint32{}
+	m.allowedPeerSsrcs = []uint32{media.GenerateSecureSsrc(callID, resolved.String(), 0)}
+	m.actualPeerSet = false
 	m.initCodec()
 	m.mu.Unlock()
 
