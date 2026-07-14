@@ -193,6 +193,15 @@ func (s *SrtpSession) SetSendAuthKeying(keying core.SrtpKeyingMaterial) error {
 	return s.sendCtx.SetAuthKeying(keying)
 }
 
+func (s *SrtpSession) SetRecvKeying(keying core.SrtpKeyingMaterial) error {
+	rc, err := NewSrtpContext(keying, s.recvCtx.authTagLen)
+	if err != nil {
+		return err
+	}
+	s.recvCtx = rc
+	return nil
+}
+
 func deriveSrtpKey(masterKey, masterSalt []byte, label byte, length int) ([]byte, error) {
 	iv := make([]byte, 16)
 	copy(iv, masterSalt[:14])

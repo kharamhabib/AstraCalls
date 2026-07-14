@@ -65,3 +65,35 @@ func (m *CallManager) reinitSrtpLocked(peerKey []byte, peerJid types.JID) {
 		m.log.Debug("srtp re-initialized with peer call key")
 	}
 }
+
+func (m *CallManager) findParticipantBySsrcLocked(ssrc uint32) string {
+	call := m.currentCall
+	if call == nil || call.RelayData == nil {
+		return ""
+	}
+	for _, part := range call.RelayData.ParticipantJids {
+		deviceJid := ensureDeviceJid(part)
+		if media.GenerateSecureSsrc(call.CallID, deviceJid, 0) == ssrc {
+			return deviceJid
+		}
+	}
+	return ""
+}
+
+func (m *CallManager) updateSrtpRecvKeyLocked(peerDeviceJid string) {
+	call := m.currentCall
+	if call == nil || call.EncryptionKey == nil || m.srtpSession == nil {
+		return
+	}
+	recvKM, err := media.DerivePerJidSrtpKey(call.EncryptionKey, peerDeviceJid)
+	if err != nil {
+		m.log.Error("failed to derive srtp key for peer device", "device", peerDeviceJid, "err", err)
+		return
+	}
+	err = m.srtpSession.SetRecvKeying(recvKM)
+	if err != nil {
+		m.log.Error("failed to set srtp recv keying", "device", peerDeviceJid, "err", err)
+	} else {
+		m.log.Debug("srtp recv key updated for device", "device", peerDeviceJid)
+	}
+}

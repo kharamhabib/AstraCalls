@@ -167,6 +167,11 @@ func (m *CallManager) onRelayData(data []byte) {
 			m.peerSsrcs = []uint32{ssrc}
 			m.relay.SetSubscriptionSsrc(ssrc)
 			go m.relay.ResendSubscriptions()
+
+			// Atualiza dinamicamente a chave de recebimento com a chave específica do dispositivo que está enviando esta SSRC
+			if peerDeviceJid := m.findParticipantBySsrcLocked(ssrc); peerDeviceJid != "" {
+				m.updateSrtpRecvKeyLocked(peerDeviceJid)
+			}
 		}
 	}
 	if !containsSsrc(m.peerSsrcs, ssrc) {
