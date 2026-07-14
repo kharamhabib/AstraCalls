@@ -128,6 +128,12 @@ func (c *mlowCodec) Decode(frame []byte) ([]float32, error) {
 		return make([]float32, mlowFrameSize), fmt.Errorf("decoder is closed")
 	}
 
+	// Despeja pacotes muito pequenos (pings/keepalives de 1 a 9 bytes)
+	// que corrompem o decodificador e causam crash fatal no resampler C.
+	if frame != nil && len(frame) < 10 {
+		return make([]float32, mlowFrameSize), nil
+	}
+
 	out := make([]C.int16_t, mlowMaxOut)
 	var n C.int
 	if frame == nil {
@@ -248,6 +254,11 @@ func (c *opusGeneric) Decode(frame []byte) ([]float32, error) {
 	defer c.decMu.Unlock()
 	if c.decoder == nil {
 		return make([]float32, c.frameSize), fmt.Errorf("decoder is closed")
+	}
+
+	// Despeja pacotes muito pequenos (pings/keepalives de 1 a 9 bytes)
+	if frame != nil && len(frame) < 10 {
+		return make([]float32, c.frameSize), nil
 	}
 
 	maxOut := c.sampleRate / 1000 * 120

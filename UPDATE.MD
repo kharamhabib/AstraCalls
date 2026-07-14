@@ -252,6 +252,12 @@ Durante os testes reais de chamadas de servidor para servidor e celular para ser
 *   **Solução**:
     *   Ajustamos `BuildAcceptStanza` no [signaling_build.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/signaling/signaling_build.go) para manter os nós `<to jid="...">` gerados de forma direta sob a tag `<accept>` (removendo apenas o wrapper `<destination>`). Isso reestabeleceu a compatibilidade com dispositivos normais.
 
+### 4. Crash do Resampler C por Pacotes de Controle Curtos
+*   **Problema**: Durante as fases de toque/preaccept, o WhatsApp envia pequenos pacotes de controle/keepalive de 1 ou 4 bytes no canal de mídia com o mesmo payload type (115). Ao passarmos esses pacotes de tamanho insuficiente (que não contêm cabeçalhos Opus completos, ex: Code 3 sem o byte de contagem de frames) para o `C.opus_decode`, a biblioteca tentava ler memória out-of-bounds ou lixo, corrompendo o resampler interno e causando o crash com `exit status 3`.
+*   **Solução**:
+    *   Implementamos nos decodificadores `mlowCodec` e `opusGeneric` no [mlow_codec_real.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_real.go) a verificação do tamanho do frame recebido: `if frame != nil && len(frame) < 10`.
+    *   Qualquer payload menor de 10 bytes (que nunca é um pacote de áudio Opus real) é **descartado antecipadamente no nível do Go**, retornando silêncio (`make([]float32, frameSize)`) e erro nulo. Isso impede que os pings nativos alcancem a C-API do Opus, blindando o servidor local localmente de forma definitiva.
+
 ---
 
 ## ⚠️ Restrições e Cuidados
@@ -270,7 +276,7 @@ Durante os testes reais de chamadas de servidor para servidor e celular para ser
 | Arquivo | Frente | Tipo de Mudança |
 |---------|--------|-----------------|
 | [`codec.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/codec.go) | F2 | + método `ResetDecoder()` na interface |
-| [`mlow_codec_real.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_real.go) | F2, F6 | + reset do decoder; + trava rígida de largura de banda (16kHz) no encoder |
+| [`mlow_codec_real.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_real.go) | F2, F6, F7 | + reset do decoder; + trava rígida de largura de banda (16kHz) no encoder; + proteção contra pacotes de controle/pings curtos (< 10 bytes) |
 | [`mlow_codec_stub.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_stub.go) | F2 | + stub `ResetDecoder()` |
 | [`callmanager.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager.go) | F3, F4, F5 | + campos `fallbackCodec`, `decodeFailCount`, contadores RTP e `allowedPeerSsrcs` |
 | [`callmanager_signaling.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_signaling.go) | F1, F2, F5 | + `accepted_elsewhere` no `AcceptCall`; + reset do decoder e inicialização de `allowedPeerSsrcs` |
