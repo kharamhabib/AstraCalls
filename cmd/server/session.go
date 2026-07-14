@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -205,6 +206,35 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 	if !callTime.IsZero() && time.Since(callTime) > 1*time.Minute {
 		s.log.Info("ignoring old incoming call offer (history/offline sync)", "callId", callID, "timestamp", callTime, "age", time.Since(callTime))
 		return
+	}
+
+	// Detectar se a chamada provém de outro servidor / companion (dispositivo > 0)
+	isServerCall := false
+	if i := strings.Index(evt.From.String(), ":"); i >= 0 {
+		if at := strings.Index(evt.From.String(), "@"); at > i {
+			dev := evt.From.String()[i+1 : at]
+			if dev != "0" && dev != "" {
+				isServerCall = true
+			}
+		}
+	}
+
+	if isServerCall {
+		s.log.Info("Incoming call detected from another server/companion device", "peerJid", evt.From.String())
+		if os.Getenv("WACALLS_REJECT_COMPANION_CALLS") == "true" {
+			s.log.Info("Rejecting server call due to WACALLS_REJECT_COMPANION_CALLS=true", "callId", callID)
+			info := signaling.ExtractNodeInfo(node)
+			if info != nil {
+				creator := wanode.AttrString(info.InnerNode.Attrs, "call-creator")
+				if creator == "" {
+					creator = evt.From.String()
+				}
+				reject := signaling.BuildRejectStanza(evt.From, info.CallID, wanode.MustJID(creator))
+				_ = wa.NewSocket(s.client).SendNode(ctx, reject)
+				s.log.Info("inbound call rejected: server/companion call block active", "call_id", info.CallID)
+			}
+			return
+		}
 	}
 
 	if max := s.mgr.maxCalls; max > 0 && s.reg.count() >= max {
