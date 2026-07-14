@@ -127,7 +127,11 @@ func BuildTerminateStanza(peerJid types.JID, callID string, callCreator types.JI
 	if sigReason != "" {
 		attrs["reason"] = sigReason
 	}
-	return callWrap(wanode.MustJID(wanode.CleanJID(peerJid.String())), waBinary.Node{
+	targetJid := peerJid
+	if reason != "accepted_elsewhere" {
+		targetJid = wanode.MustJID(wanode.CleanJID(peerJid.String()))
+	}
+	return callWrap(targetJid, waBinary.Node{
 		Tag:   "terminate",
 		Attrs: attrs,
 	})

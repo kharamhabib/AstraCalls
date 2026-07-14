@@ -265,46 +265,32 @@ Durante os testes reais de chamadas de servidor para servidor e celular para ser
     *   Implementamos nos decodificadores `mlowCodec` e `opusGeneric` no [mlow_codec_real.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_real.go) a verificação do tamanho do frame recebido: `if frame != nil && len(frame) < 10`.
     	*   Qualquer payload menor de 10 bytes (que nunca é um pacote de áudio Opus real) é **descartado antecipadamente no nível do Go**, retornando silêncio (`make([]float32, frameSize)`) e erro nulo. Isso impede que os pings nativos alcancem a C-API do Opus, blindando o servidor local localmente de forma definitiva.
 
-### 5. Roteamento de JID de Destino: CleanJID Obrigatório na Tag Raiz `<call to="...">`
-*   **Problema**: 
-    1. Descobrimos que o WhatsApp rejeita silenciosamente qualquer stanza cuja tag raiz `<call>` tenha um JID contendo sufixo de dispositivo (ex: `:0`, `:2`, `:71`) no atributo `to`. Isso se aplica a **todas** as stanzas raiz (`accept`, `preaccept`, `terminate`, `reject`, `mute_v2`).
-    2. Anteriormente, tentávamos passar o JID do dispositivo completo no `to` da raiz `<call>` de `accept` e `preaccept` achando que isso era necessário para a entrega ponto-a-ponto ao companion chamador (ex: `:71`). Isso fazia a Meta rejeitar silenciosamente as stanzas na rede, impedindo que o chamador recebesse o aceite e enviasse o sinal de parada do ringtone (`accepted_elsewhere`).
+### 5. Roteamento de JID de Destino: Diferenciação entre Sinalização (Accept/Preaccept) e Controle (Terminate/Reject)
+*   **Problema**:
+    1. Anteriormente, limpávamos o JID (via `CleanJID`) no atributo `to` da tag raiz `<call>` em todas as stanzas.
+    2. Descobrimos que se limparmos o JID para a raiz `<call to="...">` no `accept` e `preaccept`, o WhatsApp direciona a resposta apenas para o dispositivo principal (`:0`, ou seja, o celular do usuário) ao invés do companion chamador específico (ex. `:71`, que é o nosso servidor chamador). Como resultado, o servidor que iniciou a chamada nunca recebia o accept/preaccept na sinalização e a chamada ficava tocando infinitamente.
+    3. No entanto, para as stanzas de controle (`terminate`, `reject`, `relaylatency`, `transport`, `mute_v2`), a Meta exige que o JID da raiz `<call>` seja limpo (JID base sem dispositivo), senão a stanza é descartada silenciosamente.
 *   **Solução**:
-    *   Todas as stanzas raiz `<call to="...">` (`BuildAcceptStanza`, `BuildPreacceptStanza`, `BuildMuteV2Stanza`, `BuildTerminateStanza`, `BuildRejectStanza`) agora limpam obrigatoriamente o JID do destinatário principal usando `wanode.CleanJID` no atributo `to` da tag raiz `<call>`.
-    *   O direcionamento do `accept` para o dispositivo companheiro específico do chamador (ex: `:71`) é feito de forma segura e nativa através da tag interna `<to jid="...">` gerada com o JID completo dentro do nó `<accept>`, garantindo a criptografia Signal correta.
-    *   Quando a tag raiz é aceita e repassada pelo servidor da Meta, ela chega ao chamador com o atributo `from` preenchido dinamicamente com o dispositivo de origem correto (ex: `...:2@lid`). O chamador consegue identificar que o aceite veio do companion `:2` e envia o sinal `accepted_elsewhere` aos outros dispositivos (incluindo o celular primário `:0`), cessando o ringtone imediatamente.
+    *   **Accept e Preaccept**: Mantemos o `peerJid` completo e intacto no atributo `to` da tag raiz `<call>` (revertendo o uso de `CleanJID` nessas stanzas no arquivo [`signaling_build.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/signaling/signaling_build.go)).
+    *   **Controle (Terminate, Reject, etc.)**: Mantemos a limpeza de JID (`CleanJID`) na tag raiz para evitar descarte por parte do servidor do WhatsApp.
 
-### 6. Identificação de Chamadas Servidor-Servidor (AstraCalls)
-*   **Finalidade**: Identificar se uma chamada recebida provém de outro servidor executando nossa aplicação (AstraCalls) ao invés de um celular oficial, permitindo criar lógicas automáticas para ignorar ou recusar a chamada caso desejado.
+### 6. Identificação e Rejeição de Chamadas Servidor-Servidor (AstraCalls)
+*   **Finalidade**: Identificar se uma chamada recebida provém de outro servidor AstraCalls (ou cliente companheiro web/desktop) em vez de um celular oficial, permitindo ignorar ou recusar a chamada automaticamente.
 *   **Assinatura Protocolar**:
-    1.  **Lista de Codecs Simplificada (Sem MLow)**: No método `BuildOfferStanza` de nossa aplicação, os únicos codecs oferecidos na tag de áudio são `opus` (em 8k e 16k). Um cliente oficial do WhatsApp (Android/iOS) sempre oferece o codec proprietário da Meta `mlow` para chamadas 1:1. Portanto, a ausência de `<audio enc="mlow">` no `<offer>` recebido é um forte indício de chamada automatizada via servidor.
-    2.  **Dispositivo de Origem (Companion Device)**: O iniciador da chamada (`call-creator`) em servidores parceiros Whatsmeow utiliza credenciais configuradas como dispositivo vinculado (companheiro), o que insere um sufixo `:X` com `X > 0` (ex: `:2@lid` ou `:71@lid`) no JID, enquanto celulares de usuários finais costumam iniciar chamadas de seu dispositivo principal (`:0@lid` ou sem sufixo).
-*   **Exemplo de Implementação**:
-    ```go
-    func IsAstraCallsServerOffer(offerNode *waBinary.Node) bool {
-        hasMlow := false
-        for _, child := range wanode.NodeChildren(offerNode) {
-            if child.Tag == "audio" {
-                if enc := wanode.AttrString(child.Attrs, "enc"); enc == "mlow" {
-                    hasMlow = true
-                    break
-                }
-            }
-        }
-        return !hasMlow
-    }
-    ```
+    *   **Dispositivo de Origem (Companion Device)**: O iniciador da chamada (`call-creator`) em outro servidor AstraCalls utiliza credenciais configuradas como dispositivo vinculado (companheiro), o que insere um sufixo `:X` com `X > 0` (ex: `:2@lid` ou `:71@lid`) no JID, enquanto celulares de usuários finais iniciam chamadas a partir de seu dispositivo principal (`:0@lid` ou sem sufixo).
+*   **Mecanismo de Rejeição Automática**:
+    *   Implementamos uma verificação em [`session.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/cmd/server/session.go) que detecta se a chamada vem de um companion device (dispositivo `> 0`).
+    *   Se a variável de ambiente `WACALLS_REJECT_COMPANION_CALLS` estiver definida como `"true"`, o servidor AstraCalls rejeita a chamada imediatamente enviando uma stanza `<reject>`, logando o evento e encerrando o processamento antes de notificar os brokers de atendimento.
 
 ---
 
 ## ⚠️ Restrições e Cuidados
 
 ### O que NÃO deve ser feito
-*   **Não substituir o codec MLow por Opus genérico globalmente**: Isso já foi tentado e resulta em sem som. O relay do WhatsApp requer o formato MLow para chamadas 1:1.
-*   **Não remover o `CleanJID` das stanzas `<call>` raiz**: A Meta rejeita stanzas com dispositivo no `"to"` principal (descoberta da sessão anterior).
-*   **Não confiar no `recover()` como proteção primária contra crashes CGO**: O `recover()` do Go não captura `SIGABRT` de C. A proteção real é o `ResetDecoder()`, controle rígido de SSRC e restrição de banda no codificador.
-*   **Não alterar os parâmetros do encoder MLow** (`Bitrate`, `Complexity`, `DTX`, `ctlSetUsingSmpl`): Esses parâmetros produzem bitstream compatível com celulares. Alterá-los pode quebrar chamadas servidor→celular que funcionam.
-*   **Não fazer commits ou git operations automáticas**: Restrição estrita do desenvolvedor humano.
+*   **Não limpar o JID no `to` raiz de `BuildAcceptStanza` e `BuildPreacceptStanza`**: Isso quebra a sinalização de volta para o servidor chamador.
+*   **Não remover o `CleanJID` das stanzas de controle raiz**: A Meta rejeita stanzas de controle com dispositivo no `"to"` principal.
+*   **Não confiar no `recover()` como proteção primária contra crashes CGO**: A proteção real é o `ResetDecoder()`, controle rígido de SSRC e restrição de banda no codificador.
+*   **Não fazer commits ou git operations automáticas**: Restrição estrita de governança.
 
 ---
 
@@ -321,7 +307,8 @@ Durante os testes reais de chamadas de servidor para servidor e celular para ser
 | [`callmanager_media.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_media.go) | F2, F3, F4, F5 | + proteção recover; + fallback; + métricas RTP; + trava estrita por SSRC com re-derivação de chave de recebimento dinâmica |
 | [`callmanager_srtp.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_srtp.go) | F5 | + `findParticipantBySsrcLocked` e `updateSrtpRecvKeyLocked` para atualização de chave de recebimento |
 | [`callmanager_relay.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_relay.go) | F3 | + cleanup do `fallbackCodec` |
-| [`signaling_build.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/signaling/signaling_build.go) | F5, F6 | + correção de empacotamento `<to>` sob `<accept>`; + limpeza de JID (`CleanJID`) no `to` das tags `<call>` raiz para `terminate`, `reject` e `preaccept` |
+| [`signaling_build.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/signaling/signaling_build.go) | F5, F6 | Revertido CleanJID no `to` de `accept` e `preaccept` para usar `peerJid` com sufixo de dispositivo e garantir entrega de sinalização. |
+| [`session.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/cmd/server/session.go) | F6 | + Import strings; + Lógica de identificação e rejeição de chamadas companion via `WACALLS_REJECT_COMPANION_CALLS=true` no `onIncomingOffer` |
 
 ---
 
@@ -329,7 +316,7 @@ Durante os testes reais de chamadas de servidor para servidor e celular para ser
 
 ### Testes Automatizados
 ```bash
-go test ./...       # Testes de integração de toda a pilha Go
+go test ./...       # Testes de integração de toda a pilha Go (Todos PASSARAM com sucesso ✅)
 ```
 
 ### Testes Manuais (5 cenários obrigatórios)
@@ -341,6 +328,7 @@ go test ./...       # Testes de integração de toda a pilha Go
 | 3 | **Servidor A → Servidor B** | Celular do B para de tocar ✅ / Servidor A não crasha ✅ / Áudio bidirecional ✅ / Métricas RTP nos logs ✅ |
 | 4 | **Frontend (Browser) → Servidor** | Áudio bidirecional via WebRTC (regressão) |
 | 5 | **Chamada manual (sem IA)** | Áudio do operador humano funciona (regressão) |
+| 6 | **Rejeição automática de servidor** | Definir `WACALLS_REJECT_COMPANION_CALLS=true` e ligar de outro servidor. A chamada deve ser recusada automaticamente sem tocar no destino. |
 
 ### Logs a observar no Servidor A durante teste #3
 ```
