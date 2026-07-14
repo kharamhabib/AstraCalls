@@ -3,6 +3,7 @@ package call
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"time"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
@@ -19,6 +20,14 @@ func (m *CallManager) initCodec() {
 		return
 	}
 	m.codec = codec
+
+	// F3: Inicializa codec fallback para chamadas servidor->servidor
+	fallback, err := media.NewOpusCodec(16000, 320)
+	if err != nil {
+		m.log.Warn("Opus fallback codec unavailable", "err", err)
+	} else {
+		m.fallbackCodec = fallback
+	}
 }
 
 func (m *CallManager) FeedCapturedPCM(data []float32) {
@@ -172,10 +181,62 @@ func (m *CallManager) onRelayData(data []byte) {
 	if len(pkt.Payload) == 0 {
 		return
 	}
-	pcm, err := codec.Decode(pkt.Payload)
-	if err != nil {
-		return
+
+	m.rtpRecvCount++
+
+	var pcm []float32
+	var decodeErr error
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				m.log.Error("RECOVERED panic in MLow decode", "panic", r)
+				decodeErr = fmt.Errorf("panic in decode: %v", r)
+			}
+		}()
+		pcm, decodeErr = codec.Decode(pkt.Payload)
+	}()
+
+	if decodeErr != nil {
+		m.mu.Lock()
+		m.decodeFailCount++
+		shouldFallback := m.decodeFailCount > 5 && m.fallbackCodec != nil
+		fallback := m.fallbackCodec
+		m.mu.Unlock()
+
+		if shouldFallback {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						m.log.Error("RECOVERED panic in Fallback decode", "panic", r)
+						decodeErr = fmt.Errorf("panic in fallback decode: %v", r)
+					}
+				}()
+				pcm, decodeErr = fallback.Decode(pkt.Payload)
+			}()
+			if decodeErr != nil {
+				return // fallback falhou também
+			}
+			m.log.Debug("using fallback opus decoder", "fail_count", m.decodeFailCount)
+		} else {
+			return
+		}
 	}
+
+	m.mu.Lock()
+	m.decodeFailCount = 0
+	m.mu.Unlock()
+	m.decodeOkCount++
+
+	if m.rtpRecvCount%100 == 1 {
+		m.log.Info("RTP stats",
+			"received", m.rtpRecvCount,
+			"decode_ok", m.decodeOkCount,
+			"ssrc", ssrc,
+			"payload_len", len(pkt.Payload),
+		)
+	}
+
 	pcm = media.NormalizeFrame(pcm, codec.FrameSize())
 	if m.OnPeerAudio != nil {
 		m.OnPeerAudio(pcm)

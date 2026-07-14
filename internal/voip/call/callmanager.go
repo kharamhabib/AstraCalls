@@ -27,6 +27,11 @@ type CallManager struct {
 	codec       media.Codec
 	relay       RelayTransport
 
+	fallbackCodec   media.Codec
+	decodeFailCount int
+	rtpRecvCount    uint64
+	decodeOkCount   uint64
+
 	selfSsrc      uint32
 	peerSsrcs     []uint32
 	actualPeerSet bool
@@ -197,6 +202,25 @@ func (m *CallManager) AcceptCall(ctx context.Context, callID string) error {
 
 	if relayData != nil {
 		m.connectRelays(relayData.Endpoints)
+
+		// Frente 1: Notifica nossos próprios outros dispositivos para pararem de tocar
+		ourBase := wanode.CleanJID(m.ownCredJid())
+		ourDevice := ensureDeviceJid(m.ownCredJid())
+		go func() {
+			for _, part := range relayData.ParticipantJids {
+				if wanode.CleanJID(part) == ourBase {
+					partDevice := ensureDeviceJid(part)
+					if partDevice != ourDevice {
+						m.log.Debug("sending accepted_elsewhere terminate to own other device", "device", partDevice)
+						termNode := signaling.BuildTerminateStanza(wanode.MustJID(partDevice), callID, creator, "accepted_elsewhere")
+						_, err := m.sock.Query(context.Background(), termNode)
+						if err != nil {
+							m.log.Error("failed to send accepted_elsewhere to own device", "device", partDevice, "err", err)
+						}
+					}
+				}
+			}
+		}()
 	}
 	m.log.Info("call accepted", "call_id", callID)
 	return nil

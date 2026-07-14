@@ -54,6 +54,7 @@ var globalInitOnce sync.Once
 type mlowCodec struct {
 	encoder unsafe.Pointer
 	decoder unsafe.Pointer
+	decMu   sync.Mutex
 }
 
 func NewMLowCodec(opts CodecOptions) (Codec, error) {
@@ -119,6 +120,12 @@ func (c *mlowCodec) Encode(pcm []float32) ([]byte, error) {
 }
 
 func (c *mlowCodec) Decode(frame []byte) ([]float32, error) {
+	c.decMu.Lock()
+	defer c.decMu.Unlock()
+	if c.decoder == nil {
+		return make([]float32, mlowFrameSize), fmt.Errorf("decoder is closed")
+	}
+
 	out := make([]C.int16_t, mlowMaxOut)
 	var n C.int
 	if frame == nil {
@@ -140,11 +147,32 @@ func (c *mlowCodec) Decode(frame []byte) ([]float32, error) {
 func (c *mlowCodec) FrameSize() int  { return mlowFrameSize }
 func (c *mlowCodec) SampleRate() int { return mlowSampleRate }
 
-func (c *mlowCodec) Close() {
+func (c *mlowCodec) ResetDecoder() error {
+	c.decMu.Lock()
+	defer c.decMu.Unlock()
+
 	if c.decoder != nil {
 		C.opus_decoder_destroy(c.decoder)
 		c.decoder = nil
 	}
+
+	var errBuf [4]C.uchar
+	c.decoder = C.opus_decoder_create(C.int32_t(mlowSampleRate), C.int(mlowChannels), &errBuf[0])
+	if c.decoder == nil {
+		return fmt.Errorf("opus_decoder_create failed on reset")
+	}
+	C.mlow_dec_ctl(c.decoder, C.int(ctlSetUsingSmpl), C.int(1))
+	return nil
+}
+
+func (c *mlowCodec) Close() {
+	c.decMu.Lock()
+	if c.decoder != nil {
+		C.opus_decoder_destroy(c.decoder)
+		c.decoder = nil
+	}
+	c.decMu.Unlock()
+
 	if c.encoder != nil {
 		C.opus_encoder_destroy(c.encoder)
 		c.encoder = nil
@@ -156,6 +184,7 @@ type opusGeneric struct {
 	decoder    unsafe.Pointer
 	sampleRate int
 	frameSize  int
+	decMu      sync.Mutex
 }
 
 func NewOpusCodec(sampleRate, frameSize int) (Codec, error) {
@@ -204,6 +233,12 @@ func (c *opusGeneric) Encode(pcm []float32) ([]byte, error) {
 }
 
 func (c *opusGeneric) Decode(frame []byte) ([]float32, error) {
+	c.decMu.Lock()
+	defer c.decMu.Unlock()
+	if c.decoder == nil {
+		return make([]float32, c.frameSize), fmt.Errorf("decoder is closed")
+	}
+
 	maxOut := c.sampleRate / 1000 * 120
 	out := make([]C.int16_t, maxOut)
 	var n C.int
@@ -226,11 +261,31 @@ func (c *opusGeneric) Decode(frame []byte) ([]float32, error) {
 func (c *opusGeneric) FrameSize() int  { return c.frameSize }
 func (c *opusGeneric) SampleRate() int { return c.sampleRate }
 
-func (c *opusGeneric) Close() {
+func (c *opusGeneric) ResetDecoder() error {
+	c.decMu.Lock()
+	defer c.decMu.Unlock()
+
 	if c.decoder != nil {
 		C.opus_decoder_destroy(c.decoder)
 		c.decoder = nil
 	}
+
+	var errBuf [4]C.uchar
+	c.decoder = C.opus_decoder_create(C.int32_t(c.sampleRate), C.int(1), &errBuf[0])
+	if c.decoder == nil {
+		return fmt.Errorf("opus_decoder_create failed on reset")
+	}
+	return nil
+}
+
+func (c *opusGeneric) Close() {
+	c.decMu.Lock()
+	if c.decoder != nil {
+		C.opus_decoder_destroy(c.decoder)
+		c.decoder = nil
+	}
+	c.decMu.Unlock()
+
 	if c.encoder != nil {
 		C.opus_encoder_destroy(c.encoder)
 		c.encoder = nil

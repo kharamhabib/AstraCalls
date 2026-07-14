@@ -24,6 +24,9 @@ func (m *CallManager) onRelayConnected() {
 	m.mu.Lock()
 	call := m.currentCall
 	if call != nil && call.StateData.State == core.CallStateConnecting {
+		if m.codec != nil {
+			_ = m.codec.ResetDecoder()
+		}
 		if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err == nil {
 			m.emitState()
 			m.startSilenceKeepaliveLocked()
@@ -79,6 +82,8 @@ func (m *CallManager) cleanupMedia() {
 	m.mu.Lock()
 	codec := m.codec
 	m.codec = nil
+	fallback := m.fallbackCodec
+	m.fallbackCodec = nil
 	if m.keepaliveStop != nil {
 		close(m.keepaliveStop)
 		m.keepaliveStop = nil
@@ -96,5 +101,8 @@ func (m *CallManager) cleanupMedia() {
 	m.relay.Cleanup()
 	if codec != nil {
 		codec.Close()
+	}
+	if fallback != nil {
+		fallback.Close()
 	}
 }

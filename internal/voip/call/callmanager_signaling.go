@@ -125,6 +125,9 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	}
 	m.relay.SetSubscriptionSsrc(firstSsrc(m.peerSsrcs))
 	m.initSrtpKeysLocked()
+	if m.codec != nil {
+		_ = m.codec.ResetDecoder()
+	}
 	hasConn := m.relay.HasConnection()
 	relayData := call.RelayData
 	m.mu.Unlock()

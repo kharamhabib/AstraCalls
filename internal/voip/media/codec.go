@@ -9,6 +9,8 @@ type Codec interface {
 
 	SampleRate() int
 
+	ResetDecoder() error
+
 	Close()
 }
 
