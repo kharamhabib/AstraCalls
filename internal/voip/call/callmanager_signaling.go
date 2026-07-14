@@ -37,20 +37,47 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 		mediaType = core.CallMediaTypeVideo
 	}
 
+	// Extrai os participantes do offer (o próprio criador e os destinatários)
+	var participantJids []string
+	if creator != "" {
+		participantJids = append(participantJids, creator)
+	}
+	for _, c := range wanode.NodeChildren(info.InnerNode) {
+		if c.Tag == "destination" {
+			for _, toNode := range wanode.NodeChildren(&c) {
+				if toNode.Tag == "to" {
+					if toJidStr := wanode.AttrString(toNode.Attrs, "jid"); toJidStr != "" {
+						dup := false
+						for _, p := range participantJids {
+							if p == toJidStr {
+								dup = true
+								break
+							}
+						}
+						if !dup {
+							participantJids = append(participantJids, toJidStr)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	m.mu.Lock()
 	call := NewIncomingCall(callID, peerJid.String(), creator, "", mediaType)
 	if callKey != nil {
 		call.EncryptionKey = callKey
 	}
+	// Inicializa RelayData com os ParticipantJids extraídos do offer
+	call.RelayData = &core.RelayData{
+		ParticipantJids: participantJids,
+	}
 	if len(parsed.Relays) > 0 {
-		call.RelayData = &core.RelayData{
-			Endpoints:       parsed.Relays,
-			ParticipantJids: parsed.ParticipantJids,
-			UUID:            parsed.UUID,
-			SelfPid:         parsed.SelfPid,
-			PeerPid:         parsed.PeerPid,
-			HbhKey:          parsed.HbhKey,
-		}
+		call.RelayData.Endpoints = parsed.Relays
+		call.RelayData.UUID = parsed.UUID
+		call.RelayData.SelfPid = parsed.SelfPid
+		call.RelayData.PeerPid = parsed.PeerPid
+		call.RelayData.HbhKey = parsed.HbhKey
 	}
 	m.currentCall = call
 	m.initialTransportSent = false
