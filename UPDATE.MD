@@ -263,7 +263,12 @@ Durante os testes reais de chamadas de servidor para servidor e celular para ser
 *   **Problema**: Durante as fases de toque/preaccept, o WhatsApp envia pequenos pacotes de controle/keepalive de 1 ou 4 bytes no canal de mídia com o mesmo payload type (115). Ao passarmos esses pacotes de tamanho insuficiente (que não contêm cabeçalhos Opus completos, ex: Code 3 sem o byte de contagem de frames) para o `C.opus_decode`, a biblioteca tentava ler memória out-of-bounds ou lixo, corrompendo o resampler interno e causando o crash com `exit status 3`.
 *   **Solução**:
     *   Implementamos nos decodificadores `mlowCodec` e `opusGeneric` no [mlow_codec_real.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_real.go) a verificação do tamanho do frame recebido: `if frame != nil && len(frame) < 10`.
-    *   Qualquer payload menor de 10 bytes (que nunca é um pacote de áudio Opus real) é **descartado antecipadamente no nível do Go**, retornando silêncio (`make([]float32, frameSize)`) e erro nulo. Isso impede que os pings nativos alcancem a C-API do Opus, blindando o servidor local localmente de forma definitiva.
+    	*   Qualquer payload menor de 10 bytes (que nunca é um pacote de áudio Opus real) é **descartado antecipadamente no nível do Go**, retornando silêncio (`make([]float32, frameSize)`) e erro nulo. Isso impede que os pings nativos alcancem a C-API do Opus, blindando o servidor local localmente de forma definitiva.
+
+### 5. Rejeição de Stanzas VoIP por Presença de Device JID no "to" Principal do <call>
+*   **Problema**: O WhatsApp rejeita silenciosamente qualquer stanza cuja tag raiz `<call>` tenha um JID contendo sufixo de dispositivo (como `:0` ou `:2`) no atributo `to`. Para fins de roteamento e envio do sinal `accepted_elsewhere` aos outros dispositivos do próprio usuário, passávamos o JID com dispositivo (`partDevice`) para `BuildTerminateStanza`, resultando em `<call to="...:0@lid">`, que era sumariamente descartada pelos servidores da Meta.
+*   **Solução**:
+    *   Atualizamos as funções `BuildTerminateStanza`, `BuildRejectStanza` e `BuildPreacceptStanza` em [signaling_build.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/signaling/signaling_build.go) para sempre limpar o JID de destino (aplicando `wanode.CleanJID`), mantendo o atributo `"to"` da tag `<call>` raiz sempre com o JID base. O roteador do WhatsApp se encarrega de encaminhar a todos os dispositivos vinculados apropriadamente.
 
 ---
 
@@ -291,7 +296,7 @@ Durante os testes reais de chamadas de servidor para servidor e celular para ser
 | [`callmanager_media.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_media.go) | F2, F3, F4, F5 | + proteção recover; + fallback; + métricas RTP; + trava estrita por SSRC com re-derivação de chave de recebimento dinâmica |
 | [`callmanager_srtp.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_srtp.go) | F5 | + `findParticipantBySsrcLocked` e `updateSrtpRecvKeyLocked` para atualização de chave de recebimento |
 | [`callmanager_relay.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_relay.go) | F3 | + cleanup do `fallbackCodec` |
-| [`signaling_build.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/signaling/signaling_build.go) | F6 | + correção de empacotamento `<to>` sob `<accept>` |
+| [`signaling_build.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/signaling/signaling_build.go) | F5, F6 | + correção de empacotamento `<to>` sob `<accept>`; + limpeza de JID (`CleanJID`) no `to` das tags `<call>` raiz para `terminate`, `reject` e `preaccept` |
 
 ---
 

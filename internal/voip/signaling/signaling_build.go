@@ -127,7 +127,7 @@ func BuildTerminateStanza(peerJid types.JID, callID string, callCreator types.JI
 	if sigReason != "" {
 		attrs["reason"] = sigReason
 	}
-	return callWrap(peerJid, waBinary.Node{
+	return callWrap(wanode.MustJID(wanode.CleanJID(peerJid.String())), waBinary.Node{
 		Tag:   "terminate",
 		Attrs: attrs,
 	})
@@ -135,7 +135,7 @@ func BuildTerminateStanza(peerJid types.JID, callID string, callCreator types.JI
 
 
 func BuildRejectStanza(peerJid types.JID, callID string, callCreator types.JID) waBinary.Node {
-	return callWrap(peerJid, waBinary.Node{
+	return callWrap(wanode.MustJID(wanode.CleanJID(peerJid.String())), waBinary.Node{
 		Tag:   "reject",
 		Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator},
 	})
@@ -144,7 +144,7 @@ func BuildRejectStanza(peerJid types.JID, callID string, callCreator types.JID) 
 func BuildPreacceptStanza(peerJid types.JID, callID string, callCreator types.JID) waBinary.Node {
 	return waBinary.Node{
 		Tag:   "call",
-		Attrs: waBinary.Attrs{"to": peerJid, "id": GenerateCallStanzaID()},
+		Attrs: waBinary.Attrs{"to": wanode.MustJID(wanode.CleanJID(peerJid.String())), "id": GenerateCallStanzaID()},
 		Content: []waBinary.Node{{
 			Tag:   "preaccept",
 			Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator},
