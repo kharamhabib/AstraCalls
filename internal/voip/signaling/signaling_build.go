@@ -87,17 +87,13 @@ func BuildAcceptStanza(ctx context.Context, sock core.VoipSocket, callID string,
 		return waBinary.Node{}, fmt.Errorf("encrypt accept: %w", err)
 	}
 
-	encNode := extractEncFromParticipant(nodes)
-	if encNode == nil {
-		return waBinary.Node{}, fmt.Errorf("no enc node produced for accept")
-	}
-
 	acceptContent := []waBinary.Node{
 		{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
 		{Tag: "net", Attrs: waBinary.Attrs{"medium": "3"}},
-		*encNode,
-		{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},
 	}
+	acceptContent = append(acceptContent, nodes...)
+	acceptContent = append(acceptContent, waBinary.Node{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}})
+
 	if includeDeviceIdentity {
 		if di, ok := sock.AccountDeviceIdentityNode(); ok {
 			acceptContent = append(acceptContent, di)
@@ -116,22 +112,6 @@ func BuildAcceptStanza(ctx context.Context, sock core.VoipSocket, callID string,
 			Content: acceptContent,
 		}},
 	}, nil
-}
-
-func extractEncFromParticipant(nodes []waBinary.Node) *waBinary.Node {
-	for _, n := range nodes {
-		n := n
-		if n.Tag == "enc" {
-			return &n
-		}
-		for _, c := range wanode.NodeChildren(&n) {
-			c := c
-			if c.Tag == "enc" {
-				return &c
-			}
-		}
-	}
-	return nil
 }
 
 func BuildTerminateStanza(peerJid types.JID, callID string, callCreator types.JID, reason string) waBinary.Node {
