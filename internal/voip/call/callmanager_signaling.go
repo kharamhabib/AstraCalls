@@ -207,13 +207,14 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	}
 
 	if relayData != nil {
+		m.log.Info("HandleCallAccept: notifying other devices", "participants", relayData.ParticipantJids)
 		peerBase := wanode.CleanJID(call.PeerJid)
 		acceptDevice := ensureDeviceJid(peerJid.String())
 		for _, part := range relayData.ParticipantJids {
 			if wanode.CleanJID(part) == peerBase {
 				partDevice := ensureDeviceJid(part)
 				if partDevice != acceptDevice {
-					m.log.Debug("sending accepted_elsewhere terminate to other device", "device", partDevice)
+					m.log.Info("sending accepted_elsewhere terminate to other device", "device", partDevice)
 					termNode := signaling.BuildTerminateStanza(wanode.MustJID(partDevice), call.CallID, creator, "accepted_elsewhere")
 					go func(n waBinary.Node) {
 						if err := m.sock.SendNode(context.Background(), n); err != nil {

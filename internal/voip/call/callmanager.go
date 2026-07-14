@@ -209,12 +209,13 @@ func (m *CallManager) AcceptCall(ctx context.Context, callID string) error {
 		// Frente 1: Notifica nossos próprios outros dispositivos para pararem de tocar
 		ourBase := wanode.CleanJID(m.ownCredJid())
 		ourDevice := ensureDeviceJid(findOurDevice(relayData.ParticipantJids, ourBase, m.ownCredJid()))
+		m.log.Info("AcceptCall: notifying other devices", "ourDevice", ourDevice, "participants", relayData.ParticipantJids)
 		go func() {
 			for _, part := range relayData.ParticipantJids {
 				if wanode.CleanJID(part) == ourBase {
 					partDevice := ensureDeviceJid(part)
 					if partDevice != ourDevice {
-						m.log.Debug("sending accepted_elsewhere terminate to own other device", "device", partDevice)
+						m.log.Info("sending accepted_elsewhere terminate to own other device", "device", partDevice)
 						termNode := signaling.BuildTerminateStanza(wanode.MustJID(partDevice), callID, creator, "accepted_elsewhere")
 						if err := m.sock.SendNode(context.Background(), termNode); err != nil {
 							m.log.Error("failed to send accepted_elsewhere to own device", "device", partDevice, "err", err)
