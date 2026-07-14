@@ -113,13 +113,12 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 		return
 	}
 
+	var peerKey []byte
 	if signaling.NeedsDecryption(info.Tag) {
-		if peerKey, err := signaling.DecryptCallKeyInNode(ctx, m.sock, info.InnerNode, peerJid); err == nil && peerKey != nil {
-			m.mu.Lock()
-			if call.EncryptionKey != nil && !equalBytes(call.EncryptionKey, peerKey) {
-				m.reinitSrtpLocked(peerKey, peerJid)
-			}
-			m.mu.Unlock()
+		var err error
+		peerKey, err = signaling.DecryptCallKeyInNode(ctx, m.sock, info.InnerNode, peerJid)
+		if err != nil {
+			m.log.Error("accept decrypt call key failed", "err", err)
 		}
 	}
 
@@ -127,6 +126,13 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	_ = call.ApplyTransition(Transition{Type: TransitionRemoteAccepted})
 	m.emitState()
 	m.acceptedByJid = peerJid.String()
+
+	var reinitialized bool
+	if peerKey != nil && call.EncryptionKey != nil && !equalBytes(call.EncryptionKey, peerKey) {
+		m.reinitSrtpLocked(peerKey, peerJid)
+		reinitialized = true
+	}
+
 	peerJidStr := peerJid.String()
 	peerDeviceJid := ensureDeviceJid(peerJidStr)
 	activeSsrc := media.GenerateSecureSsrc(call.CallID, peerDeviceJid, 0)
@@ -134,7 +140,9 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	m.allowedPeerSsrcs = []uint32{activeSsrc}
 	m.actualPeerSet = true
 	m.relay.SetSubscriptionSsrc(firstSsrc(m.peerSsrcs))
-	m.initSrtpKeysLocked()
+	if !reinitialized {
+		m.initSrtpKeysLocked()
+	}
 	if m.codec != nil {
 		_ = m.codec.ResetDecoder()
 	}
