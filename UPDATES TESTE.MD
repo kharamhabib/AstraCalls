@@ -11,13 +11,12 @@ Em ligações de Servidor para Celular, tudo funciona 100%. No entanto, de Servi
 
 1. **Correção de Crash de Taxa de Amostragem (Sample Rate)**:
    - Resolvido o crash do samplerate da biblioteca `opus_mlow` para 16kHz na decodificação de entrada.
-2. **Roteamento Preciso de JIDs nas Stanzas (CleanJID vs. Device JID)**:
-   - Descobrimos que o WhatsApp rejeita silenciosamente stanzas de controle global (`terminate`, `reject`) se a raiz `<call to="...">` tiver sufixo de dispositivo (ex: `:0` ou `:2`). Por isso, passamos a aplicar `CleanJID` nessas stanzas.
-   - No entanto, stanzas de aceitação (`accept` e `preaccept`) **devem manter o JID do dispositivo do chamador intacto** (ex: `:71`), pois são stanzas de negociação direta ponto-a-ponto. Limpar o JID no `accept` fazia o servidor da Meta entregar o aceite no celular primário (`:0`) em vez de no servidor (`:71`) que originou a chamada. Como consequência, o servidor nunca transicionava para conectado no nível de sinalização e não podia parar o ringtone do celular receptor (`accepted_elsewhere`).
-   - **Solução Aplicada**: Restauramos o JID com dispositivo no `BuildAcceptStanza` e `BuildPreacceptStanza`, mantendo a limpeza apenas em `terminate` e `reject`.
+2. **Roteamento Preciso de JIDs nas Stanzas (CleanJID na Tag Raiz `<call to="...">`)**:
+   - Descobrimos que o WhatsApp rejeita silenciosamente **qualquer** stanza (seja `accept`, `preaccept`, `mute_v2`, `terminate` ou `reject`) se a tag raiz `<call to="...">` contiver um sufixo de dispositivo (como `:71` ou `:2`). Por isso, todas elas devem usar obrigatoriamente `CleanJID` no atributo `to` raiz.
+   - O direcionamento ponto-a-ponto do `accept` para o companion específico do chamador (ex: `:71`) é feito exclusivamente através da tag interna `<to jid="...:71@lid">` contendo a criptografia Signal diretamente dentro da tag `<accept>`.
+   - Quando o `accept` chega no chamador, a Meta coloca o JID do dispositivo que aceitou a chamada no atributo `from` do nó `<call>` raiz recebido (ex: `...:2@lid`). Isso permite ao chamador identificar exatamente qual companion atendeu e enviar com sucesso a stanza `accepted_elsewhere` para fazer o celular primário `:0` parar de tocar.
 3. **Criptografia Signal Direta do Accept (Sem `<destination>`)**:
-   - Ajustamos o `BuildAcceptStanza` para remover a tag intermediária `<destination>`. VoIP 1-para-1 moderno exige que os elementos `<to jid="...">` contendo a criptografia Signal sejam colocados diretamente sob `<accept>`.
-   - Restringimos a criptografia para ser gerada exclusivamente para o JID do `callCreator` (dispositivo `:71` que iniciou a chamada).
+   - O `BuildAcceptStanza` mantém os elementos `<to jid="...">` gerados sob `<accept>` de forma direta (removendo o wrapper obsoleto `<destination>`). A criptografia é gerada exclusivamente para o JID do `callCreator` (o dispositivo que iniciou a chamada).
 
 ---
 

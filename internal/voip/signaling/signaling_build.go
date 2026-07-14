@@ -105,7 +105,7 @@ func BuildAcceptStanza(ctx context.Context, sock core.VoipSocket, callID string,
 
 	return waBinary.Node{
 		Tag:   "call",
-		Attrs: waBinary.Attrs{"to": peerJid, "id": GenerateCallStanzaID()},
+		Attrs: waBinary.Attrs{"to": wanode.MustJID(wanode.CleanJID(peerJid.String())), "id": GenerateCallStanzaID()},
 		Content: []waBinary.Node{{
 			Tag:     "accept",
 			Attrs:   waBinary.Attrs{"call-id": callID, "call-creator": callCreator},
@@ -144,7 +144,7 @@ func BuildRejectStanza(peerJid types.JID, callID string, callCreator types.JID) 
 func BuildPreacceptStanza(peerJid types.JID, callID string, callCreator types.JID) waBinary.Node {
 	return waBinary.Node{
 		Tag:   "call",
-		Attrs: waBinary.Attrs{"to": peerJid, "id": GenerateCallStanzaID()},
+		Attrs: waBinary.Attrs{"to": wanode.MustJID(wanode.CleanJID(peerJid.String())), "id": GenerateCallStanzaID()},
 		Content: []waBinary.Node{{
 			Tag:   "preaccept",
 			Attrs: waBinary.Attrs{"call-id": callID, "call-creator": callCreator},
@@ -217,17 +217,13 @@ func BuildTransportStanza(peerJid types.JID, callID string, callCreator types.JI
 }
 
 func BuildMuteV2Stanza(peerDeviceJid types.JID, callID string, callCreator types.JID, muteState int) waBinary.Node {
-	return waBinary.Node{
-		Tag:   "call",
-		Attrs: waBinary.Attrs{"to": peerDeviceJid, "id": GenerateCallStanzaID()},
-		Content: []waBinary.Node{{
-			Tag: "mute_v2",
-			Attrs: waBinary.Attrs{
-				"call-id": callID, "call-creator": callCreator,
-				"mute-state": fmt.Sprintf("%d", muteState),
-			},
-		}},
-	}
+	return callWrap(wanode.MustJID(wanode.CleanJID(peerDeviceJid.String())), waBinary.Node{
+		Tag: "mute_v2",
+		Attrs: waBinary.Attrs{
+			"call-id": callID, "call-creator": callCreator,
+			"mute-state": fmt.Sprintf("%d", muteState),
+		},
+	})
 }
 
 func BuildAcceptReceiptStanza(peerDeviceJid types.JID, acceptMsgID, callID string, callCreator, ourJid types.JID) waBinary.Node {
