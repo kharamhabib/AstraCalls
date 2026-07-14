@@ -235,11 +235,13 @@ Durante os testes reais de chamadas de servidor para servidor e celular para ser
     1. A decodificação desses pacotes misturados causava o crash `silk_assert(0)`.
     2. Mesmo bloqueando por SSRC, se descriptografássemos os pacotes do Servidor B `:2` com a chave do Celular B `:0` (que era a única carregada inicialmente), a decodificação de dados corrompidos (lixo) crashava o resampler.
     3. Ao aceitar a chamada, a re-inicialização correta de chaves com a chave enviada no `<accept>` (`reinitSrtpLocked`) era sobrescrita imediatamente pela função genérica `initSrtpKeysLocked` com a chave antiga do offer, resultando em crash de descriptografia pós-atendimento.
+    4. No lado do callee (destinatário da chamada, ex: a VPS), a lista de aparelhos participantes (`ParticipantJids`) ficava vazia, pois o offer de entrada não contém a tag `<relay>`. Sem essa lista, a VPS não conseguia mapear o SSRC do chamador para descriptografar os pacotes de ringing, nem notificar os outros aparelhos (ex: celular) via `accepted_elsewhere` para pararem de tocar.
 *   **Solução**:
     *   Criamos o campo `allowedPeerSsrcs` no `CallManager`.
     *   No recebimento do primeiro pacote RTP em `onRelayData`, validamos e travamos o fluxo para o SSRC recebido.
+    *   **Extração de Participantes no Callee**: Modificamos o `HandleCallOffer` para ler os JIDs de destino diretamente da tag `<destination>` do offer de entrada, preenchendo a lista de aparelhos participantes no início da chamada.
     *   **Mapeamento de Chaves por SSRC**: Criamos o método `findParticipantBySsrcLocked` e `updateSrtpRecvKeyLocked`. Quando o fluxo trava no SSRC, calculamos qual JID de participante corresponde àquele SSRC e atualizamos dinamicamente a chave de recebimento (`SetRecvKeying`) para esse JID. Isso garante descriptografia 100% correta durante a fase de preaccept.
-    *   **Prevenção de Sobrescrita no Accept**: Ajustamos `HandleCallAccept` para apenas chamar `initSrtpKeysLocked` se o SRTP já não tiver sido re-inicializado de forma customizada via `reinitSrtpLocked`.
+    *   **Prevenção de Sobrescrita no Accept**: Ajustamos `HandleCallAccept` para apenas chamar `initSrtpKeysLocked` se o SRTP ya não tiver sido re-inicializado de forma customizada via `reinitSrtpLocked`.
     *   Quaisquer pacotes de outros SSRCs (keepalives concorrentes de outros aparelhos) são **descartados imediatamente**, protegendo o estado do resampler nativo de C.
 
 ### 2. Quebra do Resampler SILK por Mudança Dinâmica de Banda (TOC Byte)
@@ -285,7 +287,7 @@ Durante os testes reais de chamadas de servidor para servidor e celular para ser
 | [`mlow_codec_stub.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/mlow_codec_stub.go) | F2 | + stub `ResetDecoder()` |
 | [`srtp.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/media/srtp.go) | F5 | + método `SetRecvKeying` na struct `SrtpSession` |
 | [`callmanager.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager.go) | F3, F4, F5 | + campos `fallbackCodec`, `decodeFailCount`, contadores RTP e `allowedPeerSsrcs` |
-| [`callmanager_signaling.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_signaling.go) | F1, F2, F5 | + `accepted_elsewhere` no `AcceptCall`; + reset do decoder; + correção de sobrescrita de chave no accept |
+| [`callmanager_signaling.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_signaling.go) | F1, F2, F5 | + `accepted_elsewhere` no `AcceptCall`; + reset do decoder; + correção de sobrescrita de chave no accept; + extração de JIDs de participantes da tag `<destination>` no `HandleCallOffer` |
 | [`callmanager_media.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_media.go) | F2, F3, F4, F5 | + proteção recover; + fallback; + métricas RTP; + trava estrita por SSRC com re-derivação de chave de recebimento dinâmica |
 | [`callmanager_srtp.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_srtp.go) | F5 | + `findParticipantBySsrcLocked` e `updateSrtpRecvKeyLocked` para atualização de chave de recebimento |
 | [`callmanager_relay.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager_relay.go) | F3 | + cleanup do `fallbackCodec` |
