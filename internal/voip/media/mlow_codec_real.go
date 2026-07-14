@@ -90,6 +90,8 @@ func NewMLowCodec(opts CodecOptions) (Codec, error) {
 	}
 	C.mlow_enc_ctl(c.encoder, C.int(ctlSetInbandFEC), C.int(fec))
 	C.mlow_enc_ctl(c.encoder, C.int(ctlSetDTX), C.int(1))
+	C.mlow_enc_ctl(c.encoder, C.int(4008), C.int(1103)) // OPUS_SET_BANDWIDTH = OPUS_BANDWIDTH_WIDEBAND (16kHz)
+	C.mlow_enc_ctl(c.encoder, C.int(4004), C.int(1103)) // OPUS_SET_MAX_BANDWIDTH = OPUS_BANDWIDTH_WIDEBAND (16kHz)
 
 	return c, nil
 }
@@ -204,6 +206,8 @@ func NewOpusCodec(sampleRate, frameSize int) (Codec, error) {
 	C.mlow_enc_ctl(c.encoder, C.int(ctlSetBitrate), C.int(24000))
 	C.mlow_enc_ctl(c.encoder, C.int(ctlSetComplexity), C.int(5))
 	C.mlow_enc_ctl(c.encoder, C.int(ctlSetSignal), C.int(ctlSignalVoice))
+	C.mlow_enc_ctl(c.encoder, C.int(4008), C.int(1103)) // OPUS_SET_BANDWIDTH = OPUS_BANDWIDTH_WIDEBAND (16kHz)
+	C.mlow_enc_ctl(c.encoder, C.int(4004), C.int(1103)) // OPUS_SET_MAX_BANDWIDTH = OPUS_BANDWIDTH_WIDEBAND (16kHz)
 	return c, nil
 }
 
