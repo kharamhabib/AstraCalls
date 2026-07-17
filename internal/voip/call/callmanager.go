@@ -207,18 +207,41 @@ func (m *CallManager) AcceptCall(ctx context.Context, callID string) error {
 	if relayData != nil {
 		m.connectRelays(relayData.Endpoints)
 
-		// Frente 1: Notifica nossos próprios outros dispositivos para pararem de tocar
 		ourDevice := ensureDeviceJid(findOurDevice(m.sock, relayData.ParticipantJids, m.ownCredJid(), m.ownCredJid()))
 		m.log.Info("AcceptCall: notifying other devices", "ourDevice", ourDevice, "participants", relayData.ParticipantJids)
 		go func() {
+			ctx := context.Background()
+			var ownDevices []types.JID
+			if ownLid := m.sock.OwnLID(); !ownLid.IsEmpty() {
+				if devs, err := m.sock.GetUSyncDevices(ctx, []types.JID{ownLid}); err == nil {
+					ownDevices = append(ownDevices, devs...)
+				}
+			}
+			if ownPn := m.sock.OwnPN(); !ownPn.IsEmpty() {
+				if devs, err := m.sock.GetUSyncDevices(ctx, []types.JID{ownPn}); err == nil {
+					for _, d := range devs {
+						dup := false
+						for _, od := range ownDevices {
+							if od.User == d.User && od.Device == d.Device {
+								dup = true
+								break
+							}
+						}
+						if !dup {
+							ownDevices = append(ownDevices, d)
+						}
+					}
+				}
+			}
+
 			pjOwn, _ := types.ParseJID(m.ownCredJid())
-			for _, part := range relayData.ParticipantJids {
-				pjPart, _ := types.ParseJID(part)
-				if matchJIDs(m.sock, pjPart, pjOwn) {
-					partDevice := ensureDeviceJid(part)
-					if partDevice != ourDevice {
+			ourDeviceJid, _ := types.ParseJID(ourDevice)
+			for _, dev := range ownDevices {
+				if matchJIDs(m.sock, dev, pjOwn) {
+					if dev.String() != ourDeviceJid.String() {
+						partDevice := dev.String()
 						m.log.Info("sending accepted_elsewhere terminate to own other device", "device", partDevice)
-						termNode := signaling.BuildTerminateStanza(wanode.MustJID(partDevice), callID, creator, "accepted_elsewhere")
+						termNode := signaling.BuildTerminateStanza(dev, callID, creator, "accepted_elsewhere")
 						if err := m.sock.SendNode(context.Background(), termNode); err != nil {
 							m.log.Error("failed to send accepted_elsewhere to own device", "device", partDevice, "err", err)
 						}
