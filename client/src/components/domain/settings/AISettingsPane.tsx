@@ -3,23 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import type { AIConfig } from "@/types/ai";
-
-/** Reusable toggle switch */
-const Switch = ({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => (
-  <button
-    type="button"
-    onClick={() => onChange(!checked)}
-    className={`switch-track relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent focus:outline-none focus:ring-2 focus:ring-primary ${
-      checked ? "bg-primary" : "bg-muted"
-    }`}
-  >
-    <span
-      className={`switch-thumb pointer-events-none inline-block h-4 w-4 rounded-full bg-background shadow ${
-        checked ? "translate-x-5" : "translate-x-0"
-      }`}
-    />
-  </button>
-);
+import { Switch } from "@/components/ui/Switch";
 
 interface AISettingsPaneProps {
   config: AIConfig;
@@ -32,7 +16,7 @@ export const AISettingsPane = ({ config, onChange, enabled }: AISettingsPaneProp
     <div className="space-y-5 animate-fade-in">
       {/* Status indicator */}
       <div className="flex items-center gap-2 px-1">
-        <Sparkles className="h-4 w-4 text-amber-500 fill-amber-500/20" />
+        <Sparkles className="h-4 w-4 text-warning-text fill-warning/20" />
         <span className="text-sm font-medium">
           Integração de Voz IA (Gemini Live)
         </span>
@@ -171,23 +155,23 @@ export const AISettingsPane = ({ config, onChange, enabled }: AISettingsPaneProp
       {/* Toggles */}
       <Card className="card-premium">
         <CardContent className="p-4 space-y-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <h3 className="text-sm font-semibold text-muted-foreground">
             Comportamento
-          </p>
+          </h3>
           <div className="space-y-3.5">
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
-                <Label className="text-sm font-medium">IA Autônoma no Servidor</Label>
+                <Label className="text-sm font-medium cursor-pointer" htmlFor="serverSideAI">IA Autônoma no Servidor</Label>
                 <p className="text-xs text-muted-foreground">O servidor gerencia IA e agendamentos sem necessidade do navegador aberto</p>
               </div>
-              <Switch checked={config.serverSideAI} onChange={(v) => onChange({ ...config, serverSideAI: v })} />
+              <Switch id="serverSideAI" checked={config.serverSideAI} onChange={(v) => onChange({ ...config, serverSideAI: v })} />
             </div>
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
-                <Label className="text-sm font-medium">Atendimento Automático</Label>
+                <Label className="text-sm font-medium cursor-pointer" htmlFor="autoAnswer">Atendimento Automático</Label>
                 <p className="text-xs text-muted-foreground">Atender ligações de voz recebidas pela IA</p>
               </div>
-              <Switch checked={config.autoAnswer} onChange={(v) => onChange({ ...config, autoAnswer: v })} />
+              <Switch id="autoAnswer" checked={config.autoAnswer} onChange={(v) => onChange({ ...config, autoAnswer: v })} />
             </div>
 
             {config.autoAnswer && (
@@ -211,17 +195,17 @@ export const AISettingsPane = ({ config, onChange, enabled }: AISettingsPaneProp
             )}
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
-                <Label className="text-sm font-medium">Modo Silencioso do Operador</Label>
+                <Label className="text-sm font-medium cursor-pointer" htmlFor="silenceOperator">Modo Silencioso do Operador</Label>
                 <p className="text-xs text-muted-foreground">Mutar reprodução de áudio no seu navegador</p>
               </div>
-              <Switch checked={config.silenceOperator} onChange={(v) => onChange({ ...config, silenceOperator: v })} />
+              <Switch id="silenceOperator" checked={config.silenceOperator} onChange={(v) => onChange({ ...config, silenceOperator: v })} />
             </div>
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
-                <Label className="text-sm font-medium">Transcrição em Tempo Real</Label>
+                <Label className="text-sm font-medium cursor-pointer" htmlFor="transcribeAudio">Transcrição em Tempo Real</Label>
                 <p className="text-xs text-muted-foreground">Transcrever diálogos de áudio em texto</p>
               </div>
-              <Switch checked={config.transcribeAudio} onChange={(v) => onChange({ ...config, transcribeAudio: v })} />
+              <Switch id="transcribeAudio" checked={config.transcribeAudio} onChange={(v) => onChange({ ...config, transcribeAudio: v })} />
             </div>
           </div>
         </CardContent>

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { PlusCircle } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { Agentation } from "agentation";
 import { AppShell } from "@/components/layout/AppShell";
 import { CallsPage } from "@/pages/CallsPage";
 import { SessionPairing } from "@/components/domain/session/SessionPairing";
@@ -50,6 +51,7 @@ export const App = () => {
       </AppShell>
       <IncomingCallModal />
       <Toaster theme={theme} position="top-right" richColors closeButton />
+      {import.meta.env.DEV && <Agentation />}
     </TooltipProvider>
   );
 };

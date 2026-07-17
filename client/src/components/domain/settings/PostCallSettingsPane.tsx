@@ -4,23 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AIConfig } from "@/types/ai";
-
-/** Switch component */
-const Switch = ({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => (
-  <button
-    type="button"
-    onClick={() => onChange(!checked)}
-    className={`switch-track relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent focus:outline-none focus:ring-2 focus:ring-primary ${
-      checked ? "bg-primary" : "bg-muted"
-    }`}
-  >
-    <span
-      className={`switch-thumb pointer-events-none inline-block h-4 w-4 rounded-full bg-background shadow ${
-        checked ? "translate-x-5" : "translate-x-0"
-      }`}
-    />
-  </button>
-);
+import { Switch } from "@/components/ui/Switch";
 
 interface PostCallSettingsPaneProps {
   config: AIConfig;
@@ -53,9 +37,10 @@ export const PostCallSettingsPane = ({ config, onChange }: PostCallSettingsPaneP
       <div className="flex items-center justify-between px-1">
         <div className="flex items-center gap-2">
           <Heart className="h-4 w-4 text-primary" />
-          <span className="text-sm font-medium">Habilitar Ações Pós-Chamada (Resumos)</span>
+          <Label className="text-sm font-medium cursor-pointer" htmlFor="summaryEnabled">Habilitar Ações Pós-Chamada (Resumos)</Label>
         </div>
         <Switch
+          id="summaryEnabled"
           checked={p.summaryEnabled}
           onChange={(v) => update("summaryEnabled", v)}
         />
@@ -74,7 +59,7 @@ export const PostCallSettingsPane = ({ config, onChange }: PostCallSettingsPaneP
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-1.5">
-                      <Label className="text-sm font-semibold cursor-pointer" htmlFor="send-admin">
+                      <Label className="text-sm font-semibold cursor-pointer" htmlFor="sendAdmin">
                         Enviar Resumo ao Administrador
                       </Label>
                       <Tooltip>
@@ -87,6 +72,7 @@ export const PostCallSettingsPane = ({ config, onChange }: PostCallSettingsPaneP
                     <p className="text-xs text-muted-foreground">Notifica a gerência com o resultado da chamada.</p>
                   </div>
                   <Switch
+                    id="sendAdmin"
                     checked={p.sendAdmin}
                     onChange={(v) => update("sendAdmin", v)}
                   />
@@ -94,8 +80,9 @@ export const PostCallSettingsPane = ({ config, onChange }: PostCallSettingsPaneP
 
                 {p.sendAdmin && (
                   <div className="space-y-1.5 pl-1 animate-fade-in-fast">
-                    <Label className="text-xs">Número do Administrador (WhatsApp com DDI)</Label>
+                    <Label className="text-xs" htmlFor="adminNumber">Número do Administrador (WhatsApp com DDI)</Label>
                     <Input
+                      id="adminNumber"
                       placeholder="Ex: 5511999999999"
                       value={p.adminNumber || ""}
                       onChange={(e) => update("adminNumber", e.target.value)}
@@ -108,7 +95,7 @@ export const PostCallSettingsPane = ({ config, onChange }: PostCallSettingsPaneP
               <div className="flex items-center justify-between border-b pb-4">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-1.5">
-                    <Label className="text-sm font-semibold cursor-pointer" htmlFor="send-client">
+                    <Label className="text-sm font-semibold cursor-pointer" htmlFor="sendClient">
                       Enviar Resumo ao Cliente
                     </Label>
                     <Tooltip>
@@ -121,6 +108,7 @@ export const PostCallSettingsPane = ({ config, onChange }: PostCallSettingsPaneP
                   <p className="text-xs text-muted-foreground">Garante transparência enviando o que foi acordado ao cliente.</p>
                 </div>
                 <Switch
+                  id="sendClient"
                   checked={p.sendClient}
                   onChange={(v) => update("sendClient", v)}
                 />
@@ -131,7 +119,7 @@ export const PostCallSettingsPane = ({ config, onChange }: PostCallSettingsPaneP
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-1.5">
-                      <Label className="text-sm font-semibold cursor-pointer" htmlFor="send-webhook">
+                      <Label className="text-sm font-semibold cursor-pointer" htmlFor="webhookEnabled">
                         Disparar Webhook Pós-Chamada
                       </Label>
                       <Tooltip>
@@ -144,6 +132,7 @@ export const PostCallSettingsPane = ({ config, onChange }: PostCallSettingsPaneP
                     <p className="text-xs text-muted-foreground">Integre com seu CRM (HubSpot, Make, n8n) para atualizar o lead.</p>
                   </div>
                   <Switch
+                    id="webhookEnabled"
                     checked={p.webhookEnabled}
                     onChange={(v) => update("webhookEnabled", v)}
                   />
@@ -151,8 +140,9 @@ export const PostCallSettingsPane = ({ config, onChange }: PostCallSettingsPaneP
 
                 {p.webhookEnabled && (
                   <div className="space-y-1.5 pl-1 animate-fade-in-fast">
-                    <Label className="text-xs">URL do Webhook (POST)</Label>
+                    <Label className="text-xs" htmlFor="webhookUrl">URL do Webhook (POST)</Label>
                     <Input
+                      id="webhookUrl"
                       placeholder="https://n8n.meusistema.com/webhook/rockcall"
                       value={p.webhookUrl || ""}
                       onChange={(e) => update("webhookUrl", e.target.value)}

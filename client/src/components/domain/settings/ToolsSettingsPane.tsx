@@ -7,23 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import type { AIConfig, CustomTool, ToolParam } from "@/types/ai";
-
-/** Switch component */
-const Switch = ({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => (
-  <button
-    type="button"
-    onClick={() => onChange(!checked)}
-    className={`switch-track relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent focus:outline-none focus:ring-2 focus:ring-primary ${
-      checked ? "bg-primary" : "bg-muted"
-    }`}
-  >
-    <span
-      className={`switch-thumb pointer-events-none inline-block h-4 w-4 rounded-full bg-background shadow ${
-        checked ? "translate-x-5" : "translate-x-0"
-      }`}
-    />
-  </button>
-);
+import { Switch } from "@/components/ui/Switch";
 
 interface ToolsSettingsPaneProps {
   config: AIConfig;
@@ -108,9 +92,10 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
       <div className="flex items-center justify-between px-1">
         <div className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-primary" />
-          <span className="text-sm font-medium">Habilitar Chamada de Funções (Tools)</span>
+          <Label className="text-sm font-medium cursor-pointer" htmlFor="toolsEnabled">Habilitar Chamada de Funções (Tools)</Label>
         </div>
         <Switch
+          id="toolsEnabled"
           checked={config.toolsEnabled}
           onChange={(v) => onChange({ ...config, toolsEnabled: v })}
         />
@@ -120,9 +105,9 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
         <>
           {/* Predefined Tools */}
           <div className="px-1">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            <h3 className="text-sm font-semibold text-muted-foreground mb-3">
               Ferramentas Pré-definidas do Sistema
-            </p>
+            </h3>
           </div>
 
           <Card className="card-premium">
@@ -132,7 +117,7 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-1.5">
-                      <Label className="text-sm font-semibold cursor-pointer">
+                      <Label className="text-sm font-semibold cursor-pointer" htmlFor="hangupTool">
                         Desligar Chamada (hangup)
                       </Label>
                       <Tooltip>
@@ -145,14 +130,16 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
                     <p className="text-xs text-muted-foreground">Desliga o telefone e encerra a conexão.</p>
                   </div>
                   <Switch
+                    id="hangupTool"
                     checked={config.predefinedTools?.includes("hangup") || false}
                     onChange={() => toggleTool("hangup")}
                   />
                 </div>
                 {config.predefinedTools?.includes("hangup") && (
                   <div className="space-y-1.5 px-1 animate-slide-down">
-                    <Label className="text-xs font-semibold text-muted-foreground">Instruções para Desligar (hangup)</Label>
+                    <Label className="text-xs font-semibold text-muted-foreground" htmlFor="hangupInstructions">Instruções para Desligar (hangup)</Label>
                     <textarea
+                      id="hangupInstructions"
                       className="w-full min-h-[60px] text-xs rounded-md border border-input bg-transparent px-3 py-2 shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                       value={config.toolPrompts?.["hangup"] ?? ""}
                       onChange={(e) => handlePromptChange("hangup", e.target.value)}
@@ -167,7 +154,7 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-1.5">
-                      <Label className="text-sm font-semibold cursor-pointer">
+                      <Label className="text-sm font-semibold cursor-pointer" htmlFor="openTicketTool">
                         Abrir Chamado (open_ticket)
                       </Label>
                       <Tooltip>
@@ -180,14 +167,16 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
                     <p className="text-xs text-muted-foreground">Registra uma solicitação de retorno para o cliente no painel.</p>
                   </div>
                   <Switch
+                    id="openTicketTool"
                     checked={config.predefinedTools?.includes("open_ticket") || false}
                     onChange={() => toggleTool("open_ticket")}
                   />
                 </div>
                 {config.predefinedTools?.includes("open_ticket") && (
                   <div className="space-y-1.5 px-1 animate-slide-down">
-                    <Label className="text-xs font-semibold text-muted-foreground">Instruções para Abrir Chamado (open_ticket)</Label>
+                    <Label className="text-xs font-semibold text-muted-foreground" htmlFor="openTicketInstructions">Instruções para Abrir Chamado (open_ticket)</Label>
                     <textarea
+                      id="openTicketInstructions"
                       className="w-full min-h-[60px] text-xs rounded-md border border-input bg-transparent px-3 py-2 shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                       value={config.toolPrompts?.["open_ticket"] ?? ""}
                       onChange={(e) => handlePromptChange("open_ticket", e.target.value)}
@@ -202,7 +191,7 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-1.5">
-                      <Label className="text-sm font-semibold cursor-pointer">
+                      <Label className="text-sm font-semibold cursor-pointer" htmlFor="sendMessageTool">
                         Enviar Mensagem de Texto (send_message)
                       </Label>
                       <Tooltip>
@@ -215,14 +204,16 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
                     <p className="text-xs text-muted-foreground">Envia mensagem via WhatsApp durante a chamada.</p>
                   </div>
                   <Switch
+                    id="sendMessageTool"
                     checked={config.predefinedTools?.includes("send_message") || false}
                     onChange={() => toggleTool("send_message")}
                   />
                 </div>
                 {config.predefinedTools?.includes("send_message") && (
                   <div className="space-y-1.5 px-1 animate-slide-down">
-                    <Label className="text-xs font-semibold text-muted-foreground">Instruções para Enviar Mensagem (send_message)</Label>
+                    <Label className="text-xs font-semibold text-muted-foreground" htmlFor="sendMessageInstructions">Instruções para Enviar Mensagem (send_message)</Label>
                     <textarea
+                      id="sendMessageInstructions"
                       className="w-full min-h-[60px] text-xs rounded-md border border-input bg-transparent px-3 py-2 shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                       value={config.toolPrompts?.["send_message"] ?? ""}
                       onChange={(e) => handlePromptChange("send_message", e.target.value)}
@@ -237,7 +228,7 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-1.5">
-                      <Label className="text-sm font-semibold cursor-pointer">
+                      <Label className="text-sm font-semibold cursor-pointer" htmlFor="scheduleCallTool">
                         Agendar/Reagendar Ligação (schedule_call)
                       </Label>
                       <Tooltip>
@@ -250,14 +241,16 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
                     <p className="text-xs text-muted-foreground">Cria uma ligação programada nas tarefas da IA.</p>
                   </div>
                   <Switch
+                    id="scheduleCallTool"
                     checked={config.predefinedTools?.includes("schedule_call") || false}
                     onChange={() => toggleTool("schedule_call")}
                   />
                 </div>
                 {config.predefinedTools?.includes("schedule_call") && (
                   <div className="space-y-1.5 px-1 animate-slide-down">
-                    <Label className="text-xs font-semibold text-muted-foreground">Instruções para Agendar Ligação (schedule_call)</Label>
+                    <Label className="text-xs font-semibold text-muted-foreground" htmlFor="scheduleCallInstructions">Instruções para Agendar Ligação (schedule_call)</Label>
                     <textarea
+                      id="scheduleCallInstructions"
                       className="w-full min-h-[60px] text-xs rounded-md border border-input bg-transparent px-3 py-2 shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                       value={config.toolPrompts?.["schedule_call"] ?? ""}
                       onChange={(e) => handlePromptChange("schedule_call", e.target.value)}
@@ -271,9 +264,9 @@ export const ToolsSettingsPane = ({ config, onChange }: ToolsSettingsPaneProps) 
 
           {/* Custom Webhook Tools */}
           <div className="flex items-center justify-between px-1 mt-6">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <h3 className="text-sm font-semibold text-muted-foreground">
               Ferramentas Customizadas (Webhooks HTTP)
-            </p>
+            </h3>
             <Button
               size="sm"
               variant="outline"

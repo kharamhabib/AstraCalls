@@ -83,10 +83,10 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	m.initialTransportSent = false
 
 	selfJid := m.sock.OwnLID()
-	sj := selfJid.String()
-	if selfJid.IsEmpty() {
-		sj = m.sock.OwnPN().String()
+	if peerJid.Server == types.DefaultUserServer || selfJid.IsEmpty() {
+		selfJid = m.sock.OwnPN()
 	}
+	sj := selfJid.String()
 	m.selfSsrc = media.GenerateSecureSsrc(callID, sj, 0)
 	m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrc)
 	m.peerSsrcs = []uint32{}
@@ -200,7 +200,7 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	_ = m.sock.SendNode(ctx, signaling.BuildMuteV2Stanza(peerJid, callID, creator, 0))
 	if acceptMsgID := wanode.AttrString(node.Attrs, "id"); acceptMsgID != "" {
 		ourJid := m.sock.OwnLID()
-		if ourJid.IsEmpty() {
+		if peerJid.Server == types.DefaultUserServer || ourJid.IsEmpty() {
 			ourJid = m.sock.OwnPN()
 		}
 		_ = m.sock.SendNode(ctx, signaling.BuildAcceptReceiptStanza(peerJid, acceptMsgID, callID, creator, ourJid))

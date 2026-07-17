@@ -9,24 +9,7 @@ import { useDevices } from "@/stores/devices";
 import { useAIAgents } from "@/stores/ai";
 import { setAIConfig } from "@/services/ai";
 import { toast } from "sonner";
-
-/** Reusable toggle switch for the dialer */
-const InlineSwitch = ({ checked, onChange, disabled = false }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) => (
-  <button
-    type="button"
-    disabled={disabled}
-    onClick={() => onChange(!checked)}
-    className={`switch-track relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent focus:outline-none focus:ring-2 focus:ring-primary transition-colors ${
-      checked ? "bg-amber-500" : "bg-muted"
-    } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-  >
-    <span
-      className={`switch-thumb pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-        checked ? "translate-x-5" : "translate-x-0"
-      }`}
-    />
-  </button>
-);
+import { Switch } from "@/components/ui/Switch";
 
 export const Dialer = ({ sid }: { sid: string }) => {
   const [phone, setPhone] = useState("");
@@ -257,7 +240,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
           {/* Row 1: Call using AI Toggle */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Sparkles className={`h-4 w-4 ${callWithAI ? "text-amber-500 fill-amber-500/20" : "text-muted-foreground"}`} />
+              <Sparkles className={`h-4 w-4 ${callWithAI ? "text-warning-text fill-warning/20" : "text-muted-foreground"}`} />
               <div className="space-y-0.5">
                 <Label className="text-sm font-semibold cursor-pointer text-foreground" htmlFor="callWithAI">
                   Ligar usando a IA (Agente de Voz)
@@ -265,7 +248,8 @@ export const Dialer = ({ sid }: { sid: string }) => {
                 <p className="text-[10px] text-muted-foreground">O agente inteligente responderá na ligação automaticamente</p>
               </div>
             </div>
-            <InlineSwitch
+            <Switch
+              id="callWithAI"
               checked={callWithAI}
               disabled={isScheduled || busy || startCall.isPending} // Enforced if scheduled
               onChange={(checked) => {
@@ -281,7 +265,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
           {/* Row 2: Schedule Call Toggle */}
           <div className="border-t border-primary/5 pt-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Calendar className={`h-4 w-4 ${isScheduled ? "text-emerald-500" : "text-muted-foreground"}`} />
+              <Calendar className={`h-4 w-4 ${isScheduled ? "text-primary" : "text-muted-foreground"}`} />
               <div className="space-y-0.5">
                 <Label className="text-sm font-semibold cursor-pointer text-foreground" htmlFor="isScheduled">
                   Agendar Ligação para depois
@@ -289,7 +273,8 @@ export const Dialer = ({ sid }: { sid: string }) => {
                 <p className="text-[10px] text-muted-foreground">Programe o disparo e a IA ligará no horário definido</p>
               </div>
             </div>
-            <InlineSwitch
+            <Switch
+              id="isScheduled"
               checked={isScheduled}
               disabled={busy || startCall.isPending}
               onChange={(checked) => {
@@ -307,7 +292,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
           {isScheduled && (
             <div className="space-y-1.5 pt-3 border-t border-primary/5 animate-fade-in">
               <Label htmlFor="scheduleTime" className="text-xs font-semibold text-foreground flex items-center gap-1">
-                <Clock className="h-3 w-3 text-emerald-500" />
+                <Clock className="h-3 w-3 text-primary" />
                 Data e Hora do Disparo
               </Label>
               <Input
@@ -315,7 +300,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
                 type="datetime-local"
                 value={scheduleTime}
                 onChange={(e) => setScheduleTime(e.target.value)}
-                className="h-9 text-xs bg-background border-emerald-500/30 focus-visible:ring-emerald-500/20"
+                className="h-9 text-xs bg-background border-primary/30 focus-visible:ring-primary/20"
                 disabled={busy || startCall.isPending}
               />
             </div>
@@ -344,7 +329,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
                     <input
                       id="enableGreeting"
                       type="checkbox"
-                      className="h-3.5 w-3.5 rounded border-gray-300 accent-amber-500 cursor-pointer"
+                      className="h-3.5 w-3.5 rounded border-gray-300 accent-warning cursor-pointer"
                       checked={enableGreeting}
                       onChange={(e) => setEnableGreeting(e.target.checked)}
                       disabled={busy || startCall.isPending}

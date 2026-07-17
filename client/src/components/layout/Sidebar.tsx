@@ -11,7 +11,7 @@ import type { SessionInfo, SessionState } from "@/types/session";
 
 const dotClass: Record<SessionState, string> = {
   open: "bg-primary",
-  qr: "bg-amber-500",
+  qr: "bg-warning",
   connecting: "bg-muted-foreground/50",
   logged_out: "bg-destructive",
 };
@@ -61,9 +61,9 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
 
   return (
     <div className="flex h-full flex-col gap-2 p-3">
-      <p className="px-2 pt-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+      <h2 className="px-2 pt-1 text-xs font-semibold text-muted-foreground">
         Accounts
-      </p>
+      </h2>
       <div className="flex-1 space-y-1 overflow-y-auto custom-scrollbar">
         {sessions.map((s) => (
           <div
@@ -74,8 +74,15 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
               setActiveSession(s.id);
               onNavigate?.();
             }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setActiveSession(s.id);
+                onNavigate?.();
+              }
+            }}
             className={cn(
-              "group flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2.5 text-sm transition-all duration-200",
+              "group flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2.5 text-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
               s.id === activeId
                 ? "bg-accent text-accent-foreground shadow-sm"
                 : "hover:bg-muted/60",
@@ -116,7 +123,7 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
                 e.stopPropagation();
                 setToDelete(s);
               }}
-              className="text-muted-foreground opacity-0 transition-all duration-200 hover:text-destructive group-hover:opacity-100"
+              className="text-muted-foreground opacity-0 transition-all duration-200 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-destructive focus-visible:rounded"
               aria-label={`Delete ${s.name}`}
             >
               <Trash2 className="h-3.5 w-3.5" />

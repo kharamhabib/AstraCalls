@@ -15,6 +15,7 @@ import { getAIConfig } from "@/services/ai";
 import type { AIConfig } from "@/types/ai";
 import { toast } from "sonner";
 import { useContactInfo } from "@/hooks/useContactInfo";
+import { cn } from "@/lib/utils";
 
 const statusVariant: Record<CallStatus, "success" | "secondary" | "muted"> = {
   connected: "success",
@@ -27,8 +28,15 @@ const Meter = ({ label, db }: { label: string; db: number }) => {
   const pct = Math.max(0, Math.min(100, Math.round(((db + 60) / 60) * 100)));
   return (
     <div className="space-y-1">
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+      <div 
+        className="h-1.5 overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-label={label}
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
         <div
           className="h-full rounded-full bg-gradient-to-r from-primary/70 to-primary transition-all duration-100"
           style={{ width: `${pct}%` }}
@@ -187,12 +195,12 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
                     onClick={toggleAI}
                     className={
                       isAIActive
-                        ? "bg-amber-500 hover:bg-amber-600 text-white animate-pulse-glow"
+                        ? "bg-warning hover:bg-warning/90 text-warning-foreground animate-pulse-glow"
                         : ""
                     }
                     aria-label={isAIActive ? "Desativar IA" : "Ativar IA"}
                   >
-                    <Sparkles className={`h-4 w-4 ${isAIActive ? "fill-white/20" : "text-amber-500"}`} />
+                    <Sparkles className={`h-4 w-4 ${isAIActive ? "fill-warning-foreground/20 text-warning-foreground" : "text-warning-text"}`} />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>{isAIActive ? "Desativar IA" : "Ativar IA"}</TooltipContent>
@@ -225,7 +233,7 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
               const remaining = Math.max(0, Math.ceil((call.startedAt + aiConfig.autoAnswerDelay * 1000 - Date.now()) / 1000));
               if (remaining <= 0) return null;
               return (
-                <div className="rounded-md bg-amber-500/10 px-3 py-1.5 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400 font-medium animate-pulse flex items-center justify-between">
+                <div className="rounded-md bg-warning/10 px-3 py-1.5 border border-warning/20 text-xs text-warning-text font-medium animate-pulse flex items-center justify-between">
                   <span>A IA atenderá automaticamente em:</span>
                   <span className="font-bold text-sm tabular-nums">{remaining}s</span>
                 </div>
@@ -240,18 +248,36 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
 
         {/* Real-time transcription */}
         {transcripts.length > 0 && (
-          <div className="border-t pt-3 space-y-2 max-h-36 overflow-y-auto text-xs bg-muted/20 p-2.5 rounded-md custom-scrollbar animate-fade-in">
-            <p className="font-semibold text-[10px] text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-1">
-              <Sparkles className="h-3 w-3 text-amber-500 fill-amber-500/10" /> Transcrição em tempo real
+          <div className="border-t pt-4 space-y-3 max-h-48 overflow-y-auto bg-muted/10 p-3 rounded-xl border border-primary/5 custom-scrollbar animate-fade-in">
+            <p className="font-semibold text-xs text-muted-foreground mb-2 flex items-center gap-1.5 px-1">
+              <Sparkles className="h-3.5 w-3.5 text-primary fill-primary/10" />
+              <span>Conversa em tempo real</span>
             </p>
-            {transcripts.map((line, idx) => (
-              <div key={idx} className={`leading-relaxed ${line.speaker === "ai" ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
-                <span className="font-semibold uppercase text-[9px] mr-1">
-                  {line.speaker === "ai" ? "IA:" : "Cliente:"}
-                </span>
-                {line.text}
-              </div>
-            ))}
+            <div className="space-y-3">
+              {transcripts.map((line, idx) => (
+                <div 
+                  key={idx} 
+                  className={cn(
+                    "flex flex-col gap-1 w-full animate-fade-in-fast",
+                    line.speaker === "ai" ? "items-end" : "items-start"
+                  )}
+                >
+                  <span className="text-[9px] font-semibold text-muted-foreground/80 tracking-wider uppercase px-1.5">
+                    {line.speaker === "ai" ? "IA" : "Cliente"}
+                  </span>
+                  <div 
+                    className={cn(
+                      "rounded-2xl px-3 py-2 text-xs shadow-sm max-w-[85%] leading-relaxed border break-words",
+                      line.speaker === "ai"
+                        ? "bg-primary/10 text-emerald-900 dark:text-emerald-100 border-primary/20 rounded-tr-none"
+                        : "bg-card text-foreground border-border/80 rounded-tl-none"
+                    )}
+                  >
+                    {line.text}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

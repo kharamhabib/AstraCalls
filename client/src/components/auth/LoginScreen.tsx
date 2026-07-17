@@ -54,7 +54,7 @@ export const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
           {/* Form */}
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <Label className="text-xs font-semibold text-muted-foreground">
                 URL do Servidor
               </Label>
               <Input
@@ -65,7 +65,7 @@ export const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <Label className="text-xs font-semibold text-muted-foreground">
                 API Key
               </Label>
               <Input

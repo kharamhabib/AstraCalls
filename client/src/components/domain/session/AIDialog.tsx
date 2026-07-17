@@ -12,26 +12,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/Switch";
 import { getAIConfig, setAIConfig, deleteAIConfig } from "@/services/ai";
 import type { AIConfig, ScheduledCall } from "@/types/ai";
 import { useAIAgents } from "@/stores/ai";
-
-// Componente Switch personalizado para evitar dependências adicionais
-const Switch = ({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => (
-  <button
-    type="button"
-    onClick={() => onChange(!checked)}
-    className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary ${
-      checked ? "bg-primary" : "bg-muted"
-    }`}
-  >
-    <span
-      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-background shadow transition duration-200 ease-in-out ${
-        checked ? "translate-x-5" : "translate-x-0"
-      }`}
-    />
-  </button>
-);
 
 const defaultConfig: AIConfig = {
   geminiApiKey: "",
@@ -231,14 +215,14 @@ export const AIDialog = ({ sid }: { sid: string }) => {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant={enabled ? "default" : "outline"} size="sm" className="gap-1.5">
-          <Sparkles className="h-4 w-4 text-amber-500 fill-amber-500/20" />
+          <Sparkles className="h-4 w-4 text-warning-text fill-warning/20" />
           Configurar IA
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
           <div className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-amber-500 fill-amber-500/25" />
+            <Sparkles className="h-5 w-5 text-warning-text fill-warning/25" />
             <DialogTitle>Integração de Voz IA (Gemini Live)</DialogTitle>
           </div>
           <DialogDescription>
@@ -379,10 +363,11 @@ export const AIDialog = ({ sid }: { sid: string }) => {
               <div className="border rounded-lg p-3 space-y-3.5 bg-muted/20">
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
-                    <Label className="text-sm font-medium">IA Autônoma no Servidor</Label>
+                    <Label className="text-sm font-medium cursor-pointer" htmlFor="serverSideAI">IA Autônoma no Servidor</Label>
                     <p className="text-xs text-muted-foreground">O servidor gerencia IA e agendamentos sem navegador aberto</p>
                   </div>
                   <Switch
+                    id="serverSideAI"
                     checked={config.serverSideAI}
                     onChange={(v) => setConfig({ ...config, serverSideAI: v })}
                   />
@@ -390,10 +375,11 @@ export const AIDialog = ({ sid }: { sid: string }) => {
 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
-                    <Label className="text-sm font-medium">Atendimento Automático</Label>
+                    <Label className="text-sm font-medium cursor-pointer" htmlFor="autoAnswer">Atendimento Automático</Label>
                     <p className="text-xs text-muted-foreground">Atender ligações de voz recebidas pela IA</p>
                   </div>
                   <Switch
+                    id="autoAnswer"
                     checked={config.autoAnswer}
                     onChange={(v) => setConfig({ ...config, autoAnswer: v })}
                   />
@@ -421,10 +407,11 @@ export const AIDialog = ({ sid }: { sid: string }) => {
 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
-                    <Label className="text-sm font-medium">Modo Silencioso do Operador</Label>
+                    <Label className="text-sm font-medium cursor-pointer" htmlFor="silenceOperator">Modo Silencioso do Operador</Label>
                     <p className="text-xs text-muted-foreground">Mutar reprodução de áudio no seu navegador</p>
                   </div>
                   <Switch
+                    id="silenceOperator"
                     checked={config.silenceOperator}
                     onChange={(v) => setConfig({ ...config, silenceOperator: v })}
                   />
@@ -432,10 +419,11 @@ export const AIDialog = ({ sid }: { sid: string }) => {
 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
-                    <Label className="text-sm font-medium">Transcrição em Tempo Real</Label>
+                    <Label className="text-sm font-medium cursor-pointer" htmlFor="transcribeAudio">Transcrição em Tempo Real</Label>
                     <p className="text-xs text-muted-foreground">Transcrever diálogos de áudio em texto</p>
                   </div>
                   <Switch
+                    id="transcribeAudio"
                     checked={config.transcribeAudio}
                     onChange={(v) => setConfig({ ...config, transcribeAudio: v })}
                   />

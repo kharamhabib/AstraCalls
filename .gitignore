@@ -56,3 +56,10 @@ Thumbs.db
 # Dados locais de bancos de dados rodando em Docker
 postgres-data/
 pgdata/
+
+# Agentes de IA e customizações locais
+.agents/
+.impeccable/
+.codex/
+skills-lock.json
+.github/

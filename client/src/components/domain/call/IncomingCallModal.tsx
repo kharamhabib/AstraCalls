@@ -132,11 +132,11 @@ export const IncomingCallModal = () => {
               className="h-20 w-20 rounded-full object-cover border-4 border-primary/20 shadow-lg animate-pulse-glow"
             />
           ) : (
-            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/15 text-primary border-4 border-primary/10 shadow-md">
+            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/15 text-primary border-4 border-primary/10 shadow-md animate-radar-ripple">
               {contact ? (
                 <span className="text-2xl font-bold tracking-wider">{getInitials(contact.name)}</span>
               ) : (
-                <PhoneIncoming className="h-10 w-10 animate-bounce" />
+                <PhoneIncoming className="h-10 w-10" />
               )}
             </div>
           )}
@@ -151,7 +151,7 @@ export const IncomingCallModal = () => {
           </div>
         </DialogHeader>
         {showCountdown && remaining > 0 && (
-          <div className="rounded-lg bg-amber-500/10 px-4 py-2 border border-amber-500/20 text-xs text-amber-600 dark:text-amber-400 font-medium animate-pulse flex flex-col items-center gap-1 text-center">
+          <div className="rounded-lg bg-warning/10 px-4 py-2 border border-warning/20 text-xs text-warning-text font-medium animate-pulse flex flex-col items-center gap-1 text-center">
             <span>A IA atenderá automaticamente em</span>
             <span className="font-bold text-lg tabular-nums">{remaining}s</span>
           </div>
@@ -160,11 +160,11 @@ export const IncomingCallModal = () => {
         <div className="mt-4 flex flex-col gap-3 w-full">
           {aiConfig && (
             <Button
-              className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold py-5 flex items-center justify-center gap-2 shadow-md hover:scale-[1.02] transition-transform duration-200 rounded-xl"
+              className="w-full bg-warning hover:bg-warning/90 text-warning-foreground font-bold py-5 flex items-center justify-center gap-2 shadow-md hover:scale-[1.02] transition-transform duration-200 rounded-xl"
               disabled={busy}
               onClick={handleAcceptWithAI}
             >
-              <Sparkles className="h-4.5 w-4.5 fill-white/10 animate-pulse text-white" />
+              <Sparkles className="h-4.5 w-4.5 animate-pulse text-warning-foreground" />
               Atender com IA
             </Button>
           )}

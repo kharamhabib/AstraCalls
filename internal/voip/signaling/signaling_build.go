@@ -17,7 +17,7 @@ var (
 
 func BuildOfferStanza(ctx context.Context, sock core.VoipSocket, callID string, callKey []byte, peerJid types.JID, isVideo bool) (waBinary.Node, error) {
 	creator := sock.OwnLID()
-	if creator.IsEmpty() {
+	if peerJid.Server == types.DefaultUserServer || creator.IsEmpty() {
 		creator = sock.OwnPN()
 	}
 

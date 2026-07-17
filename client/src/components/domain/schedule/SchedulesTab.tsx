@@ -206,7 +206,7 @@ export const SchedulesTab = ({ sid }: { sid: string }) => {
             <div key={col.id} className="space-y-2.5">
               <div className="flex items-center gap-2 px-1">
                 <ColIcon className="h-4 w-4 text-muted-foreground" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <h3 className="text-sm font-semibold text-muted-foreground">
                   {col.label}
                 </h3>
                 <span className="text-xs text-muted-foreground/60">({col.items.length})</span>

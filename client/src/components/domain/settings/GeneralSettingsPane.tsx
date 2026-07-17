@@ -32,9 +32,9 @@ export const GeneralSettingsPane = () => {
     <div className="space-y-5 animate-fade-in">
       {/* Audio Devices */}
       <div className="px-1">
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+        <h3 className="text-sm font-semibold text-muted-foreground mb-3">
           Dispositivos de Áudio
-        </p>
+        </h3>
       </div>
 
       <Card className="card-premium">
@@ -73,9 +73,9 @@ export const GeneralSettingsPane = () => {
 
       {/* Theme */}
       <div className="px-1">
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+        <h3 className="text-sm font-semibold text-muted-foreground mb-3">
           Aparência
-        </p>
+        </h3>
       </div>
 
       <Card className="card-premium">
@@ -106,9 +106,9 @@ export const GeneralSettingsPane = () => {
 
       {/* Language (placeholder for future i18n) */}
       <div className="px-1">
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+        <h3 className="text-sm font-semibold text-muted-foreground mb-3">
           Idioma da Interface
-        </p>
+        </h3>
       </div>
 
       <Card className="card-premium">

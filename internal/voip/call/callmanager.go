@@ -3,6 +3,7 @@ package call
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 	"wacalls/internal/voip/core"
@@ -119,11 +120,11 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 	if isVideo {
 		mediaType = core.CallMediaTypeVideo
 	}
+	resolved := m.sock.ResolveLIDForPN(ctx, peerJid)
 	creator := m.sock.OwnLID()
-	if creator.IsEmpty() {
+	if resolved.Server == types.DefaultUserServer || creator.IsEmpty() {
 		creator = m.sock.OwnPN()
 	}
-	resolved := m.sock.ResolveLIDForPN(ctx, peerJid)
 
 	call := NewOutgoingCall(callID, resolved.String(), creator.String(), mediaType)
 	callKey := media.GenerateCallKey()
@@ -293,9 +294,15 @@ func (m *CallManager) EndCall(ctx context.Context, reason core.EndCallReason) er
 }
 
 func (m *CallManager) ownCredJid() string {
-	lid := m.sock.OwnLID()
-	if !lid.IsEmpty() {
-		return lid.String()
+	var usePn bool
+	if m.currentCall != nil {
+		usePn = strings.Contains(m.currentCall.PeerJid, "@s.whatsapp.net")
+	}
+	if !usePn {
+		lid := m.sock.OwnLID()
+		if !lid.IsEmpty() {
+			return lid.String()
+		}
 	}
 	return m.sock.OwnPN().String()
 }
