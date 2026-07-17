@@ -101,6 +101,7 @@ func (s *Socket) ResolveLIDForPN(ctx context.Context, pn types.JID) types.JID {
 	}
 	if s.cli.Store != nil && s.cli.Store.LIDs != nil {
 		if lid, err := s.cli.Store.LIDs.GetLIDForPN(ctx, pn); err == nil && !lid.IsEmpty() {
+			lid.Device = pn.Device
 			return lid
 		}
 	}
@@ -113,6 +114,7 @@ func (s *Socket) ResolvePNForLID(ctx context.Context, lid types.JID) types.JID {
 	}
 	if s.cli.Store != nil && s.cli.Store.LIDs != nil {
 		if pn, err := s.cli.Store.LIDs.GetPNForLID(ctx, lid); err == nil && !pn.IsEmpty() {
+			pn.Device = lid.Device
 			return pn
 		}
 	}
