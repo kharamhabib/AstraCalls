@@ -91,18 +91,20 @@ O plano está dividido em **4 frentes** que devem ser implementadas em conjunto 
 
 **Detecção de Namespace Misto (Causa Raiz & Solução)**:
 - **Problema**: O celular do operador pode receber a chamada utilizando a identidade LID (`@lid`), enquanto a ponte de áudio ou banco do whatsmeow pode rastrear o destinatário via número de telefone clássico (`@s.whatsapp.net`). Se compararmos as strings diretamente via `CleanJID`, o celular primário (`:0`) nunca corresponderá ao nosso JID de sessão (`:2`), impedindo o envio do `accepted_elsewhere`.
-- **Solução**: Implementamos a função `matchJIDs` em `helpers.go` e `ResolvePNForLID` em `socket.go` para resolver no banco de dados local (`GetPNForLID`/`GetLIDForPN`) as chaves correspondentes. A comparação é feita convertendo ambos para o mesmo namespace caso haja divergência.
+- **Solução**: Implementamos a função `matchJIDs` em `helpers.go` e `ResolvePNForLID` / `ResolveLIDForPN` em `socket.go` para resolver no banco de dados local (`GetPNForLID`/`GetLIDForPN`) as chaves correspondentes. A comparação é feita convertendo ambos para o mesmo namespace caso haja divergência.
+- **Filtragem de Device ID e Preservação no Socket (`matchDevices`)**: Para evitar que o comparador limpe o device suffix (o whatsmeow retorna `Device = 0` na busca do banco) e cause uma igualdade falsa resultando no envio de `<terminate>` para o nosso próprio nó ativo (derrubando o próprio áudio), alteramos a resolução no `socket.go` para propagar e manter o ID do aparelho original. Além disso, criamos o comparador `matchDevices` em `helpers.go` para checar de forma assertiva as identidades resolvidas e seus respectivos aparelhos.
+- **Prevenção de State Lock na Conexão ICE**: Em fluxos rápidos (Server-to-Server), a mídia se estabelece de forma instantânea antes de o sinal de aceite XML ser processado, o que tentava forçar a transição de `CallStateRinging` diretamente para `CallStateActive`. Para evitar rejeições de transição inválida em `callstate.go` que mantinham a chamada trancada sem carregar o `ServerAIAgent`, ajustamos `HandleCallAccept` para realizar a transição intermediária `TransitionRemoteAccepted` caso o estado ainda esteja em `Ringing`.
 
 **Lógica detalhada**:
 ```
 Para cada participante em RelayData.ParticipantJids:
   Se matchJIDs(sock, participante, ownJid):
     participanteDevice = ensureDeviceJid(participante)
-    Se participanteDevice != ourDevice:
+    Se !matchDevices(sock, participanteDevice, ourDevice):
       → Enviar BuildTerminateStanza(participanteDevice, callID, creator, "accepted_elsewhere")
 ```
 
-**Impacto**: Sinalização de encerramento enviada com precisão. Corrige o ringtone fantasma em chamadas Servidor→Servidor e Celular→Servidor.
+**Impacto**: Sinalização de encerramento enviada com precisão absoluta, sem auto-terminar o nó ativo, e acoplamento instantâneo do pipeline da IA.
 
 ---
 
