@@ -238,7 +238,7 @@ func (m *CallManager) AcceptCall(ctx context.Context, callID string) error {
 			ourDeviceJid, _ := types.ParseJID(ourDevice)
 			for _, dev := range ownDevices {
 				if matchJIDs(m.sock, dev, pjOwn) {
-					if dev.String() != ourDeviceJid.String() {
+					if !matchDevices(m.sock, dev, ourDeviceJid) {
 						partDevice := dev.String()
 						m.log.Info("sending accepted_elsewhere terminate to own other device", "device", partDevice)
 						termNode := signaling.BuildTerminateStanza(dev, callID, creator, "accepted_elsewhere")

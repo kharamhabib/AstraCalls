@@ -121,3 +121,20 @@ func equalBytes(a, b []byte) bool {
 	}
 	return true
 }
+
+func matchDevices(sock core.VoipSocket, j1, j2 types.JID) bool {
+	ctx := context.Background()
+	r1 := j1
+	if j1.Server == types.HiddenUserServer {
+		if pn := sock.ResolvePNForLID(ctx, j1); !pn.IsEmpty() {
+			r1 = pn
+		}
+	}
+	r2 := j2
+	if j2.Server == types.HiddenUserServer {
+		if pn := sock.ResolvePNForLID(ctx, j2); !pn.IsEmpty() {
+			r2 = pn
+		}
+	}
+	return r1.User == r2.User && r1.Device == r2.Device
+}

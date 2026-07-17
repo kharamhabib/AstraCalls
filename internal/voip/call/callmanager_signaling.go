@@ -211,11 +211,13 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 		m.log.Info("HandleCallAccept: notifying other devices", "participants", relayData.ParticipantJids)
 		pjPeer, _ := types.ParseJID(call.PeerJid)
 		acceptDevice := ensureDeviceJid(peerJid.String())
+		pjAcceptDevice, _ := types.ParseJID(acceptDevice)
 		for _, part := range relayData.ParticipantJids {
 			pjPart, _ := types.ParseJID(part)
 			if matchJIDs(m.sock, pjPart, pjPeer) {
 				partDevice := ensureDeviceJid(part)
-				if partDevice != acceptDevice {
+				pjPartDevice, _ := types.ParseJID(partDevice)
+				if !matchDevices(m.sock, pjPartDevice, pjAcceptDevice) {
 					m.log.Info("sending accepted_elsewhere terminate to other device", "device", partDevice)
 					termNode := signaling.BuildTerminateStanza(wanode.MustJID(partDevice), call.CallID, creator, "accepted_elsewhere")
 					go func(td string, tn waBinary.Node) {
@@ -231,6 +233,9 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 
 	if hasConn {
 		m.mu.Lock()
+		if call.StateData.State == core.CallStateRinging {
+			_ = call.ApplyTransition(Transition{Type: TransitionRemoteAccepted})
+		}
 		if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err == nil {
 			m.emitState()
 			m.startSilenceKeepaliveLocked()
@@ -238,6 +243,12 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 		}
 		m.mu.Unlock()
 	} else if relayData != nil {
+		m.mu.Lock()
+		if err := call.ApplyTransition(Transition{Type: TransitionRemoteAccepted}); err == nil {
+			m.emitState()
+			m.log.Info("call accepted by peer", "call_id", call.CallID)
+		}
+		m.mu.Unlock()
 		m.connectRelays(relayData.Endpoints)
 	}
 }
