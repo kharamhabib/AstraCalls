@@ -106,3 +106,15 @@ func (s *Socket) ResolveLIDForPN(ctx context.Context, pn types.JID) types.JID {
 	}
 	return pn
 }
+
+func (s *Socket) ResolvePNForLID(ctx context.Context, lid types.JID) types.JID {
+	if lid.Server == types.DefaultUserServer {
+		return lid
+	}
+	if s.cli.Store != nil && s.cli.Store.LIDs != nil {
+		if pn, err := s.cli.Store.LIDs.GetPNForLID(ctx, lid); err == nil && !pn.IsEmpty() {
+			return pn
+		}
+	}
+	return lid
+}

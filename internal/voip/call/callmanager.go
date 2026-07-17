@@ -208,12 +208,13 @@ func (m *CallManager) AcceptCall(ctx context.Context, callID string) error {
 		m.connectRelays(relayData.Endpoints)
 
 		// Frente 1: Notifica nossos próprios outros dispositivos para pararem de tocar
-		ourBase := wanode.CleanJID(m.ownCredJid())
-		ourDevice := ensureDeviceJid(findOurDevice(relayData.ParticipantJids, ourBase, m.ownCredJid()))
+		ourDevice := ensureDeviceJid(findOurDevice(m.sock, relayData.ParticipantJids, m.ownCredJid(), m.ownCredJid()))
 		m.log.Info("AcceptCall: notifying other devices", "ourDevice", ourDevice, "participants", relayData.ParticipantJids)
 		go func() {
+			pjOwn, _ := types.ParseJID(m.ownCredJid())
 			for _, part := range relayData.ParticipantJids {
-				if wanode.CleanJID(part) == ourBase {
+				pjPart, _ := types.ParseJID(part)
+				if matchJIDs(m.sock, pjPart, pjOwn) {
 					partDevice := ensureDeviceJid(part)
 					if partDevice != ourDevice {
 						m.log.Info("sending accepted_elsewhere terminate to own other device", "device", partDevice)
@@ -260,9 +261,10 @@ func (m *CallManager) EndCall(ctx context.Context, reason core.EndCallReason) er
 	nodes = append(nodes, signaling.BuildTerminateStanza(wanode.MustJID(call.PeerJid), call.CallID, wanode.MustJID(call.CallCreator), string(reason)))
 
 	if call.RelayData != nil && len(call.RelayData.ParticipantJids) > 0 {
-		ourBase := wanode.CleanJID(m.ownCredJid())
+		pjOwn, _ := types.ParseJID(m.ownCredJid())
 		for _, part := range call.RelayData.ParticipantJids {
-			if wanode.CleanJID(part) != ourBase {
+			pjPart, _ := types.ParseJID(part)
+			if !matchJIDs(m.sock, pjPart, pjOwn) {
 				nodes = append(nodes, signaling.BuildTerminateStanza(wanode.MustJID(part), call.CallID, wanode.MustJID(call.CallCreator), string(reason)))
 			}
 		}

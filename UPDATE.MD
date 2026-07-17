@@ -84,24 +84,25 @@ O plano está dividido em **4 frentes** que devem ser implementadas em conjunto 
 **Arquivo**: [`callmanager.go`](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/astracall/AstraCalls/internal/voip/call/callmanager.go) — método `AcceptCall()`
 
 **Mudança**: Após enviar o `<accept>` para o chamador, adicionar uma goroutine que:
-1. Lê a lista de participantes do relay (`call.RelayData.ParticipantJids`)
-2. Identifica o JID base do nosso servidor (ex: `5561996878959@lid`)
-3. Para cada participante que tem o mesmo JID base mas sufixo de dispositivo diferente (ex: `:0` quando nós somos `:71`), envia uma stanza `<terminate>` com motivo `"accepted_elsewhere"`
-4. Cada envio é feito em goroutine separada com `context.Background()` para não bloquear
+1. Lê a lista de participantes do relay (`call.RelayData.ParticipantJids`).
+2. Identifica o JID do nosso servidor resolvendo-o dinamicamente de forma segura contra namespaces mistos (LID/PN).
+3. Para cada participante que corresponde ao nosso JID mas tem sufixo de dispositivo diferente (ex: `:0` quando nós somos `:2`), envia uma stanza `<terminate>` com motivo `"accepted_elsewhere"`.
+4. Cada envio é feito em goroutine separada com `context.Background()` para não bloquear.
+
+**Detecção de Namespace Misto (Causa Raiz & Solução)**:
+- **Problema**: O celular do operador pode receber a chamada utilizando a identidade LID (`@lid`), enquanto a ponte de áudio ou banco do whatsmeow pode rastrear o destinatário via número de telefone clássico (`@s.whatsapp.net`). Se compararmos as strings diretamente via `CleanJID`, o celular primário (`:0`) nunca corresponderá ao nosso JID de sessão (`:2`), impedindo o envio do `accepted_elsewhere`.
+- **Solução**: Implementamos a função `matchJIDs` em `helpers.go` e `ResolvePNForLID` em `socket.go` para resolver no banco de dados local (`GetPNForLID`/`GetLIDForPN`) as chaves correspondentes. A comparação é feita convertendo ambos para o mesmo namespace caso haja divergência.
 
 **Lógica detalhada**:
 ```
-ourBase = CleanJID(ownCredJid())       // ex: "5561996878959@lid"
-ourDevice = ensureDeviceJid(ownCredJid()) // ex: "5561996878959:71@lid"
-
 Para cada participante em RelayData.ParticipantJids:
-  Se CleanJID(participante) == ourBase:
+  Se matchJIDs(sock, participante, ownJid):
     participanteDevice = ensureDeviceJid(participante)
     Se participanteDevice != ourDevice:
       → Enviar BuildTerminateStanza(participanteDevice, callID, creator, "accepted_elsewhere")
 ```
 
-**Impacto**: Mudança isolada na sinalização. Não afeta o fluxo de áudio nem o estado da chamada. Baixo risco de regressão.
+**Impacto**: Sinalização de encerramento enviada com precisão. Corrige o ringtone fantasma em chamadas Servidor→Servidor e Celular→Servidor.
 
 ---
 

@@ -96,14 +96,15 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 	}
 	m.actualPeerSet = false
 	// SSRC/SRTP a partir dos participantes do relay (igual à saída em HandleCallAck)
-	ourBase := wanode.CleanJID(m.ownCredJid())
 	if len(parsed.ParticipantJids) > 0 {
-		ourDeviceJid := ensureDeviceJid(findOurDevice(parsed.ParticipantJids, ourBase, m.ownCredJid()))
+		ourDeviceJid := ensureDeviceJid(findOurDevice(m.sock, parsed.ParticipantJids, m.ownCredJid(), m.ownCredJid()))
 		m.selfSsrc = media.GenerateSecureSsrc(callID, ourDeviceJid, 0)
 		m.rtpSession = media.NewWhatsAppOpusSession(m.selfSsrc)
 		m.allowedPeerSsrcs = []uint32{}
+		pjOwn, _ := types.ParseJID(m.ownCredJid())
 		for _, part := range parsed.ParticipantJids {
-			if wanode.CleanJID(part) != ourBase {
+			pjPart, _ := types.ParseJID(part)
+			if !matchJIDs(m.sock, pjPart, pjOwn) {
 				m.allowedPeerSsrcs = append(m.allowedPeerSsrcs, media.GenerateSecureSsrc(callID, ensureDeviceJid(part), 0))
 			}
 		}
@@ -208,19 +209,20 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 
 	if relayData != nil {
 		m.log.Info("HandleCallAccept: notifying other devices", "participants", relayData.ParticipantJids)
-		peerBase := wanode.CleanJID(call.PeerJid)
+		pjPeer, _ := types.ParseJID(call.PeerJid)
 		acceptDevice := ensureDeviceJid(peerJid.String())
 		for _, part := range relayData.ParticipantJids {
-			if wanode.CleanJID(part) == peerBase {
+			pjPart, _ := types.ParseJID(part)
+			if matchJIDs(m.sock, pjPart, pjPeer) {
 				partDevice := ensureDeviceJid(part)
 				if partDevice != acceptDevice {
 					m.log.Info("sending accepted_elsewhere terminate to other device", "device", partDevice)
 					termNode := signaling.BuildTerminateStanza(wanode.MustJID(partDevice), call.CallID, creator, "accepted_elsewhere")
-					go func(n waBinary.Node) {
-						if err := m.sock.SendNode(context.Background(), n); err != nil {
-							m.log.Error("failed to send accepted_elsewhere terminate", "device", partDevice, "err", err)
+					go func(td string, tn waBinary.Node) {
+						if err := m.sock.SendNode(context.Background(), tn); err != nil {
+							m.log.Error("failed to send accepted_elsewhere terminate", "device", td, "err", err)
 						}
-					}(termNode)
+					}(partDevice, termNode)
 				}
 			}
 		}
@@ -292,9 +294,8 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
 		HbhKey:          parsed.HbhKey,
 	}
 
-	ourBase := wanode.CleanJID(m.ownCredJid())
 	if len(parsed.ParticipantJids) > 0 {
-		ourDeviceJid := ensureDeviceJid(findOurDevice(parsed.ParticipantJids, ourBase, m.ownCredJid()))
+		ourDeviceJid := ensureDeviceJid(findOurDevice(m.sock, parsed.ParticipantJids, m.ownCredJid(), m.ownCredJid()))
 		newSelf := media.GenerateSecureSsrc(call.CallID, ourDeviceJid, 0)
 		if newSelf != m.selfSsrc {
 			m.selfSsrc = newSelf
@@ -302,8 +303,10 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
 		}
 		m.peerSsrcs = []uint32{}
 		m.allowedPeerSsrcs = []uint32{}
+		pjOwn, _ := types.ParseJID(m.ownCredJid())
 		for _, part := range parsed.ParticipantJids {
-			if wanode.CleanJID(part) != ourBase {
+			pjPart, _ := types.ParseJID(part)
+			if !matchJIDs(m.sock, pjPart, pjOwn) {
 				m.allowedPeerSsrcs = append(m.allowedPeerSsrcs, media.GenerateSecureSsrc(call.CallID, ensureDeviceJid(part), 0))
 			}
 		}

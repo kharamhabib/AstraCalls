@@ -1,11 +1,13 @@
 package call
 
 import (
+	"context"
 	"strings"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/wanode"
 
 	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/types"
 )
 
 func hasChildTag(n *waBinary.Node, tag string) bool {
@@ -27,19 +29,59 @@ func ensureDeviceJid(jid string) string {
 	return strings.Replace(jid, "@", ":0@", 1)
 }
 
-func findOurDevice(participants []string, ourBase, fallback string) string {
+func matchJIDs(sock core.VoipSocket, j1, j2 types.JID) bool {
+	ctx := context.Background()
+	if j1.User == j2.User {
+		return true
+	}
+	if j1.Server == types.HiddenUserServer {
+		if pn := sock.ResolvePNForLID(ctx, j1); !pn.IsEmpty() && pn.User == j2.User {
+			return true
+		}
+	} else if j1.Server == types.DefaultUserServer {
+		if lid := sock.ResolveLIDForPN(ctx, j1); !lid.IsEmpty() && lid.User == j2.User {
+			return true
+		}
+	}
+	if j2.Server == types.HiddenUserServer {
+		if pn := sock.ResolvePNForLID(ctx, j2); !pn.IsEmpty() && pn.User == j1.User {
+			return true
+		}
+	} else if j2.Server == types.DefaultUserServer {
+		if lid := sock.ResolveLIDForPN(ctx, j2); !lid.IsEmpty() && lid.User == j1.User {
+			return true
+		}
+	}
+	return false
+}
+
+func findOurDevice(sock core.VoipSocket, participants []string, ownJid string, fallback string) string {
+	pjOwn, err := types.ParseJID(ownJid)
+	if err != nil {
+		return fallback
+	}
 	for _, jid := range participants {
-		if wanode.CleanJID(jid) == ourBase && strings.Contains(jid, ":") {
-			return jid
+		pj, err := types.ParseJID(jid)
+		if err == nil {
+			if matchJIDs(sock, pj, pjOwn) && strings.Contains(jid, ":") {
+				return jid
+			}
 		}
 	}
 	return fallback
 }
 
-func firstPeerDevice(participants []string, ourBase string) string {
+func firstPeerDevice(sock core.VoipSocket, participants []string, ownJid string) string {
+	pjOwn, err := types.ParseJID(ownJid)
+	if err != nil {
+		return ""
+	}
 	for _, jid := range participants {
-		if wanode.CleanJID(jid) != ourBase {
-			return jid
+		pj, err := types.ParseJID(jid)
+		if err == nil {
+			if !matchJIDs(sock, pj, pjOwn) {
+				return jid
+			}
 		}
 	}
 	return ""
