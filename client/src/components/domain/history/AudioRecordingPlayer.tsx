@@ -1,12 +1,19 @@
 import { useState, useRef } from "react";
 import { Play, Pause, Download, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { apiUrl, getApiKey } from "@/lib/auth";
 
 export const AudioRecordingPlayer = ({ recordingUrl }: { recordingUrl: string }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const apiKey = getApiKey();
+  const fullUrl = recordingUrl.startsWith("http") || recordingUrl.startsWith("blob:") ? recordingUrl : apiUrl(recordingUrl);
+  const authenticatedUrl = apiKey
+    ? (fullUrl.includes("?") ? `${fullUrl}&apiKey=${apiKey}` : `${fullUrl}?apiKey=${apiKey}`)
+    : fullUrl;
 
   const togglePlay = () => {
     if (!audioRef.current) return;
@@ -29,7 +36,7 @@ export const AudioRecordingPlayer = ({ recordingUrl }: { recordingUrl: string })
     <div className="flex items-center gap-3 rounded-xl border bg-muted/40 p-2.5">
       <audio
         ref={audioRef}
-        src={recordingUrl}
+        src={authenticatedUrl}
         onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
         onLoadedMetadata={() => audioRef.current && setDuration(audioRef.current.duration)}
         onEnded={() => setIsPlaying(false)}
@@ -76,7 +83,7 @@ export const AudioRecordingPlayer = ({ recordingUrl }: { recordingUrl: string })
         className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
         title="Baixar áudio"
       >
-        <a href={recordingUrl} download>
+        <a href={authenticatedUrl} download>
           <Download className="h-4 w-4" />
         </a>
       </Button>
