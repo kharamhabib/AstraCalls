@@ -9,7 +9,7 @@ import { useNow } from "@/lib/use-now";
 import { useCalls } from "@/stores/calls";
 import { useDevices } from "@/stores/devices";
 import { useEndCall } from "@/hooks/useEndCall";
-import { formatCallDuration, formatPhoneNumber } from "@/utils/format";
+import { formatCallDuration, formatPhoneNumber, getInitials } from "@/utils/format";
 import type { CallStatus, CallSummary } from "@/types/call";
 import { useAIAgents, type TranscriptLine } from "@/stores/ai";
 import { getAIConfig } from "@/services/ai";
@@ -61,14 +61,6 @@ const AudioMeterBar = ({ label, icon: Icon, db }: { label: string; icon: any; db
 };
 
 const EMPTY_TRANSCRIPT: TranscriptLine[] = [];
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
-}
 
 export const CallCard = ({ call }: { call: CallSummary }) => {
   const conn = useCalls((s) => s.ownConnections.get(call.callId));

@@ -292,7 +292,7 @@ func (s *server) handleReady(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	if err := s.mainDB.PingContext(ctx); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready", "error": err.Error()})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
@@ -479,14 +479,16 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		jid, err := types.ParseJID(row.Peer)
 		if err == nil {
 			phone = jid.User
-			if jid.Server == "lid" && sess.getClient() != nil && sess.getClient().Store.LIDs != nil {
-				if pn, err := sess.getClient().Store.LIDs.GetPNForLID(r.Context(), jid); err == nil && !pn.IsEmpty() {
+		cli := sess.getClient()
+		if cli != nil && cli.Store != nil {
+			if jid.Server == "lid" && cli.Store.LIDs != nil {
+				if pn, err := cli.Store.LIDs.GetPNForLID(r.Context(), jid); err == nil && !pn.IsEmpty() {
 					phone = pn.User
 					jid = pn
 				}
 			}
-			if sess.getClient() != nil {
-				if contact, err := sess.getClient().Store.Contacts.GetContact(r.Context(), jid); err == nil && contact.Found {
+			if cli.Store.Contacts != nil {
+				if contact, err := cli.Store.Contacts.GetContact(r.Context(), jid); err == nil && contact.Found {
 					if contact.FullName != "" {
 						name = contact.FullName
 					} else if contact.PushName != "" {
@@ -494,6 +496,7 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+		}
 		}
 		
 		recURL := row.RecordingURL
@@ -797,10 +800,16 @@ func (s *server) doEndCall(sess *Session, w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleGetContactInfo(w http.ResponseWriter, r *http.Request) {
-	sess := s.sessionByID(w, r.PathValue("sid"))
+	sess := s.pairedSession(w, r.PathValue("sid"))
 	if sess == nil {
 		return
 	}
+	cli := sess.getClient()
+	if cli == nil || cli.Store == nil || cli.Store.Contacts == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "not paired"})
+		return
+	}
+
 	jidStr := r.PathValue("jid")
 	jid, err := types.ParseJID(jidStr)
 	if err != nil {
@@ -815,7 +824,7 @@ func (s *server) handleGetContactInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var name string
-	contact, err := sess.getClient().Store.Contacts.GetContact(r.Context(), jid)
+	contact, err := cli.Store.Contacts.GetContact(r.Context(), jid)
 	if err == nil && contact.Found {
 		if contact.FullName != "" {
 			name = contact.FullName
@@ -832,7 +841,7 @@ func (s *server) handleGetContactInfo(w http.ResponseWriter, r *http.Request) {
 	var pictureURL string
 	pfpCtx, pfpCancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer pfpCancel()
-	pfp, err := sess.getClient().GetProfilePictureInfo(pfpCtx, jid, &whatsmeow.GetProfilePictureParams{
+	pfp, err := cli.GetProfilePictureInfo(pfpCtx, jid, &whatsmeow.GetProfilePictureParams{
 		Preview: true,
 	})
 	if err == nil && pfp != nil {
@@ -1013,7 +1022,27 @@ func (s *server) withRateLimit(next http.Handler, limiters *apiLimiters) http.Ha
 	})
 }
 
+func (s *server) checkCallSession(ctx context.Context, sessionID, callID string) bool {
+	// 1. Check active calls in broker memory
+	if rec, ok := s.broker.getCall(callID); ok {
+		return rec.SessionID == sessionID
+	}
+	// 2. Check history in database
+	exists, err := s.sessions.store.checkCallSession(ctx, sessionID, callID)
+	if err == nil && exists {
+		return true
+	}
+	return false
+}
+
 func findRecordingPath(callID string) string {
+	// Sanitize callID to prevent path traversal (only allow letters, numbers, underscores, and hyphens)
+	for _, r := range callID {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+			return ""
+		}
+	}
+
 	recordingsDir := filepath.Join("storage", "recordings")
 	exactPath := filepath.Join(recordingsDir, fmt.Sprintf("%s.wav", callID))
 	if _, err := os.Stat(exactPath); err == nil {
@@ -1037,6 +1066,13 @@ func (s *server) handleGetCallRecording(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "sid and callId required", http.StatusBadRequest)
 		return
 	}
+
+	// SEC-03: Validar que a chamada pertence a esta sessão antes de servir o áudio
+	if !s.checkCallSession(r.Context(), sid, callID) {
+		http.Error(w, "unauthorized or recording not found", http.StatusForbidden)
+		return
+	}
+
 	filePath := findRecordingPath(callID)
 	if filePath == "" {
 		http.Error(w, "recording not found", http.StatusNotFound)

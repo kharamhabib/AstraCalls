@@ -11,6 +11,7 @@ import { setAIConfig } from "@/services/ai";
 import { parseScheduledCalls } from "@/lib/ai/scheduled-calls";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/Switch";
+import { formatPhoneNumber } from "@/utils/format";
 
 export const Dialer = ({ sid }: { sid: string }) => {
   const [phone, setPhone] = useState("");
@@ -139,16 +140,6 @@ export const Dialer = ({ sid }: { sid: string }) => {
     }
   };
 
-  const formatPhoneNumber = (value: string) => {
-    // Basic phone formatting (e.g. +55 11 99999-9999)
-    const cleaned = value.replace(/\D/g, "");
-    if (cleaned.length === 0) return "";
-    if (cleaned.length <= 2) return `+${cleaned}`;
-    if (cleaned.length <= 4) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2)}`;
-    if (cleaned.length <= 8) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4)}`;
-    if (cleaned.length <= 12) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 8)}-${cleaned.slice(8)}`;
-    return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 9)}-${cleaned.slice(9, 13)}`;
-  };
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawVal = e.target.value;

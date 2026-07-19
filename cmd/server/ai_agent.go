@@ -23,8 +23,8 @@ import (
 const serverOwnerID = "__server__"
 const maxAudioQueueSamples = 800000 // ~50 segundos a 16kHz
 
-// toolWebhookClient executa webhooks de tools customizadas (timeout fixo).
-var toolWebhookClient = &http.Client{Timeout: 10 * time.Second}
+// toolWebhookClient executa webhooks de tools customizadas (timeout fixo, SSRF protegido).
+var toolWebhookClient = safeHTTPClient(10*time.Second, false)
 
 // geminiRestClient chama a API REST do Gemini (resumo pós-chamada) com timeout —
 // antes era http.Post sem timeout, que podia pendurar a goroutine para sempre.

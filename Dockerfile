@@ -38,7 +38,7 @@ RUN go build -tags mlow -o /wacalls ./cmd/server
 
 # ---------- Stage 4: runtime enxuto ----------
 FROM debian:bookworm-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg wget \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=opus /opt/libopus_mlow.so /usr/local/lib/libopus_mlow.so
 RUN ldconfig
@@ -47,5 +47,9 @@ COPY --from=client /app/client/dist /app/client/dist
 WORKDIR /app
 RUN mkdir -p /app/storage/recordings
 EXPOSE 8080 50000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget --spider -q http://localhost:8080/healthz || exit 1
+
 ENTRYPOINT ["wacalls"]
 CMD ["-addr", ":8080", "-static", "/app/client/dist"]

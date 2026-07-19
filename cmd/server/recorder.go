@@ -96,6 +96,9 @@ func (r *ServerAudioRecorder) WriteInbound(pcm []float32) {
 		return
 	}
 
+	if r.inPos < r.basePos {
+		r.inPos = r.basePos
+	}
 	offset := r.inPos - r.basePos
 	r.ensureCap(offset + uint64(len(pcm)))
 
@@ -116,6 +119,9 @@ func (r *ServerAudioRecorder) WriteOutbound(pcm []float32) {
 		return
 	}
 
+	if r.outPos < r.basePos {
+		r.outPos = r.basePos
+	}
 	offset := r.outPos - r.basePos
 	r.ensureCap(offset + uint64(len(pcm)))
 

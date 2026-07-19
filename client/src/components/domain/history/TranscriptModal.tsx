@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { useTranscript } from "@/hooks/useHistory";
 import { toast } from "sonner";
 import type { HistoryRow } from "@/types/history";
-import { formatPhoneNumber } from "@/utils/format";
+import { formatPhoneNumber, formatDuration } from "@/utils/format";
 import { cn } from "@/lib/utils";
 
 interface TranscriptModalProps {
@@ -15,17 +15,6 @@ interface TranscriptModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   displayName: string;
-}
-
-function formatDuration(startedAt: number, endedAt: number | null): string {
-  if (!endedAt) return "Em andamento";
-  const secs = Math.floor((endedAt - startedAt) / 1000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  const remainSecs = secs % 60;
-  if (mins < 60) return `${mins}m ${remainSecs}s`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ${mins % 60}m`;
 }
 
 export const TranscriptModal = ({ sid, row, open, onOpenChange, displayName }: TranscriptModalProps) => {

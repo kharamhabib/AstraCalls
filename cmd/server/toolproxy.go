@@ -51,12 +51,16 @@ func (s *server) handleToolProxy(w http.ResponseWriter, r *http.Request) {
 
 	// Teto de 5 MB na resposta (proteção contra payload gigante)
 	limited := io.LimitReader(resp.Body, 5<<20)
+	respBytes, err := io.ReadAll(limited)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
 	var respPayload map[string]any
-	if err := json.NewDecoder(limited).Decode(&respPayload); err != nil {
+	if err := json.Unmarshal(respBytes, &respPayload); err != nil {
 		// Se não for JSON, lê como texto e coloca num campo "output"
-		buf := new(bytes.Buffer)
-		_, _ = buf.ReadFrom(limited)
-		writeJSON(w, resp.StatusCode, map[string]any{"output": buf.String()})
+		writeJSON(w, resp.StatusCode, map[string]any{"output": string(respBytes)})
 		return
 	}
 

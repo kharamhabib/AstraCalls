@@ -11,6 +11,7 @@ import { PCMPlayer } from "./pcm-utils";
 import { GeminiLiveSession, type ToolArgs, type ToolResult } from "./gemini-session";
 import { DEFAULT_TOOL_PROMPTS, FETCH_CHATWOOT_HISTORY_PROMPT, TOOL_RULES_HEADER } from "./default-prompts";
 import { parseScheduledCalls } from "./scheduled-calls";
+import { formatPhoneNumber } from "@/utils/format";
 
 export { parseScheduledCalls };
 
@@ -32,15 +33,6 @@ const buildGeminiWsUrl = async (sid: string, geminiApiKey: string): Promise<stri
 
 type ContactInfo = { jid: string; phone: string; name: string; pictureUrl: string };
 
-const formatPhoneNumber = (value: string): string => {
-  const cleaned = value.replace(/\D/g, "");
-  if (cleaned.length === 0) return "";
-  if (cleaned.length <= 2) return `+${cleaned}`;
-  if (cleaned.length <= 4) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2)}`;
-  if (cleaned.length <= 8) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4)}`;
-  if (cleaned.length <= 12) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 8)}-${cleaned.slice(8)}`;
-  return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 9)}-${cleaned.slice(9, 13)}`;
-};
 
 // GeminiLiveAgent orquestra o agente de voz IA conectado à chamada WebRTC (modo client-side).
 export class GeminiLiveAgent {

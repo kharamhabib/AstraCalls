@@ -1,6 +1,14 @@
 .git
+*.exe
+storage/
+postgres-data/
+pgdata/
 client/node_modules
 client/dist
+node_modules
+.agents
+.codex
+.impeccable
 wacalls
 wacalls-mlow
 *.db

@@ -11,28 +11,7 @@ import { useContactInfo } from "@/hooks/useContactInfo";
 import { AudioRecordingPlayer } from "./AudioRecordingPlayer";
 import { TranscriptModal } from "./TranscriptModal";
 import type { HistoryRow } from "@/types/history";
-
-function formatDuration(startedAt: number, endedAt: number | null): string {
-  if (!endedAt) return "Em andamento";
-  const secs = Math.floor((endedAt - startedAt) / 1000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  const remainSecs = secs % 60;
-  if (mins < 60) return `${mins}m ${remainSecs}s`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ${mins % 60}m`;
-}
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2 && parts[0] && parts[1]) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  if (parts[0]) {
-    return parts[0].slice(0, 2).toUpperCase();
-  }
-  return "?";
-}
+import { formatDuration, getInitials, formatPhoneNumber, isCallMissedOrRejected } from "@/utils/format";
 
 export const HistoryItem = ({ sid, row }: { sid: string; row: HistoryRow }) => {
   const [showTranscriptModal, setShowTranscriptModal] = useState(false);
@@ -40,28 +19,11 @@ export const HistoryItem = ({ sid, row }: { sid: string; row: HistoryRow }) => {
   const isInbound = row.direction === "inbound";
   const DirIcon = isInbound ? PhoneIncoming : PhoneOutgoing;
 
-  const formatPhoneNumber = (value: string) => {
-    const cleaned = value.replace(/\D/g, "");
-    if (cleaned.length === 0) return "";
-    if (cleaned.length <= 2) return `+${cleaned}`;
-    if (cleaned.length <= 4) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2)}`;
-    if (cleaned.length <= 8) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4)}`;
-    if (cleaned.length <= 12) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 8)}-${cleaned.slice(8)}`;
-    return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 9)}-${cleaned.slice(9, 13)}`;
-  };
-
   const displayName = row.name || contact?.name || formatPhoneNumber(row.phone);
   const hasContactName = (row.name || contact?.name) && (row.name || contact?.name) !== row.phone;
   const pictureUrl = contact?.pictureUrl;
 
-  const durationMs = (row.endedAt ?? row.startedAt) - row.startedAt;
-  const isMissedOrRejected =
-    row.endReason === "rejected" ||
-    row.endReason === "no_answer" ||
-    row.endReason === "timeout" ||
-    row.endReason === "canceled" ||
-    !row.endedAt ||
-    durationMs < 3000;
+  const isMissedOrRejected = isCallMissedOrRejected(row.startedAt, row.endedAt, row.endReason);
 
   let statusBadgeText = isInbound ? "Recebida" : "Efetuada";
   let badgeClass = isInbound ? "bg-secondary text-secondary-foreground" : "bg-primary text-white";

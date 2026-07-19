@@ -7,7 +7,7 @@ import { useDevices } from "@/stores/devices";
 import { useAcceptCall } from "@/hooks/useAcceptCall";
 import { useRejectCall } from "@/hooks/useRejectCall";
 import { useContactInfo } from "@/hooks/useContactInfo";
-import { formatPhoneNumber } from "@/utils/format";
+import { formatPhoneNumber, getInitials } from "@/utils/format";
 import { getAIConfig } from "@/services/ai";
 import { useAIAgents } from "@/stores/ai";
 import { useNow } from "@/lib/use-now";
@@ -55,14 +55,6 @@ const startRingLoop = (): RingHandle | null => {
     },
   };
 };
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
-}
 
 export const IncomingCallModal = () => {
   const incoming = useCalls((s) => s.incoming);

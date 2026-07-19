@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Phone,
   PhoneMissed,
@@ -25,7 +25,7 @@ import { AudioRecordingPlayer } from "@/components/domain/history/AudioRecording
 import { TranscriptModal } from "@/components/domain/history/TranscriptModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatPhoneNumber } from "@/utils/format";
+import { formatPhoneNumber, isCallMissedOrRejected, isCallAnswered } from "@/utils/format";
 import { cn } from "@/lib/utils";
 
 function formatDurationSecs(secs: number): string {
@@ -67,35 +67,43 @@ export const DashboardPage = ({ sid }: { sid: string }) => {
       .catch(() => {});
   }, [sid]);
 
-  // Cálculos de Estatísticas Reais baseados no Histórico
-  const todayStr = new Date().toDateString();
-  const todayHistory = historyRows.filter(
-    (r) => new Date(r.startedAt).toDateString() === todayStr,
-  );
+  // Cálculos de Estatísticas Reais baseados no Histórico (Memoizados)
+  const todayStr = useMemo(() => new Date().toDateString(), []);
+  
+  const todayHistory = useMemo(() => {
+    return historyRows.filter(
+      (r) => new Date(r.startedAt).toDateString() === todayStr,
+    );
+  }, [historyRows, todayStr]);
   
   const todayCallsCount = todayHistory.length;
   
-  const answeredCalls = todayHistory.filter((r) => {
-    const duration = (r.endedAt ?? r.startedAt) - r.startedAt;
-    return r.endedAt && duration >= 3000 && r.endReason !== "rejected" && r.endReason !== "no_answer" && r.endReason !== "timeout";
-  });
+  const answeredCalls = useMemo(() => {
+    return todayHistory.filter((r) => isCallAnswered(r.startedAt, r.endedAt, r.endReason));
+  }, [todayHistory]);
 
-  const missedCallsCount = todayHistory.filter((r) => {
-    const duration = (r.endedAt ?? r.startedAt) - r.startedAt;
-    if (r.endReason === "rejected" || r.endReason === "no_answer" || r.endReason === "timeout" || r.endReason === "canceled") return true;
-    if (!r.endedAt || duration < 3000) return true;
-    return false;
-  }).length;
+  const missedCallsCount = useMemo(() => {
+    return todayHistory.filter((r) => isCallMissedOrRejected(r.startedAt, r.endedAt, r.endReason)).length;
+  }, [todayHistory]);
 
-  const totalSecsAnswered = answeredCalls.reduce(
-    (acc, r) => acc + Math.floor(((r.endedAt ?? r.startedAt) - r.startedAt) / 1000),
-    0,
-  );
-  const avgDurationSecs = answeredCalls.length > 0 ? Math.round(totalSecsAnswered / answeredCalls.length) : 0;
+  const totalSecsAnswered = useMemo(() => {
+    return answeredCalls.reduce(
+      (acc, r) => acc + Math.floor(((r.endedAt ?? r.startedAt) - r.startedAt) / 1000),
+      0,
+    );
+  }, [answeredCalls]);
   
-  const openTicketsCount = todayHistory.filter((r) => r.ticketOpened).length;
+  const avgDurationSecs = useMemo(() => {
+    return answeredCalls.length > 0 ? Math.round(totalSecsAnswered / answeredCalls.length) : 0;
+  }, [answeredCalls, totalSecsAnswered]);
   
-  const activeRealtimeCalls = activeCallsStore.filter((c) => c.sessionId === sid && c.status !== "ended");
+  const openTicketsCount = useMemo(() => {
+    return todayHistory.filter((r) => r.ticketOpened).length;
+  }, [todayHistory]);
+  
+  const activeRealtimeCalls = useMemo(() => {
+    return activeCallsStore.filter((c) => c.sessionId === sid && c.status !== "ended");
+  }, [activeCallsStore, sid]);
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto animate-fade-in">
@@ -259,14 +267,7 @@ export const DashboardPage = ({ sid }: { sid: string }) => {
                 const formattedPhone = formatPhoneNumber(r.phone);
                 const displayName = r.name || formattedPhone;
 
-                const durationMs = (r.endedAt ?? r.startedAt) - r.startedAt;
-                const isMissedOrRejected =
-                  r.endReason === "rejected" ||
-                  r.endReason === "no_answer" ||
-                  r.endReason === "timeout" ||
-                  r.endReason === "canceled" ||
-                  !r.endedAt ||
-                  durationMs < 3000;
+                const isMissedOrRejected = isCallMissedOrRejected(r.startedAt, r.endedAt, r.endReason);
 
                 let statusBadgeText = isInbound ? "Recebida" : "Efetuada";
                 let badgeClass = isInbound

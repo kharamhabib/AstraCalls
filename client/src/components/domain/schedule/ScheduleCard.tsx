@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useContactInfo } from "@/hooks/useContactInfo";
 import type { ScheduledCall } from "@/types/ai";
+import { getInitials, formatPhoneNumber } from "@/utils/format";
 
 type ScheduleStatus = "pending" | "completed" | "cancelled";
 
@@ -21,14 +22,6 @@ const statusConfig: Record<ScheduleStatus, { label: string; variant: "secondary"
   cancelled: { label: "Cancelado", variant: "destructive", icon: XCircle },
 };
 
-function getInitials(name: string): string {
-  const parts = name.split(" ");
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
-}
-
 interface ScheduleCardProps {
   sid: string;
   schedule: ScheduledCall;
@@ -40,16 +33,6 @@ export const ScheduleCard = ({ sid, schedule, onDelete }: ScheduleCardProps) => 
   const status = getStatus(schedule);
   const cfg = statusConfig[status];
   const StatusIcon = cfg.icon;
-
-  const formatPhoneNumber = (value: string) => {
-    const cleaned = value.replace(/\D/g, "");
-    if (cleaned.length === 0) return "";
-    if (cleaned.length <= 2) return `+${cleaned}`;
-    if (cleaned.length <= 4) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2)}`;
-    if (cleaned.length <= 8) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4)}`;
-    if (cleaned.length <= 12) return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 8)}-${cleaned.slice(8)}`;
-    return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 9)}-${cleaned.slice(9, 13)}`;
-  };
 
   const displayName = contact ? contact.name : formatPhoneNumber(schedule.phone);
   const hasContactName = contact && contact.name !== schedule.phone;

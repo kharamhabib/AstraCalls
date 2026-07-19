@@ -382,6 +382,12 @@ func (s *sessionStore) getNPSSummary(ctx context.Context, sessionID string) (NPS
 	}, nil
 }
 
+func (s *sessionStore) checkCallSession(ctx context.Context, sessionID, callID string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM call_history WHERE session_id = $1 AND call_id = $2)`, sessionID, callID).Scan(&exists)
+	return exists, err
+}
+
 // updateCallTicket persiste a abertura de chamado de uma chamada do histórico.
 func (s *sessionStore) updateCallTicket(ctx context.Context, sessionID, callID, reason string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE call_history SET ticket_opened = TRUE, ticket_reason = $3 WHERE session_id = $1 AND call_id = $2`, sessionID, callID, reason)
