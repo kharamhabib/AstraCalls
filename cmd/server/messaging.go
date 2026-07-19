@@ -15,7 +15,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var mediaHTTP = &http.Client{Timeout: 30 * time.Second}
+var (
+	// mediaHTTP baixa mídias de URLs externas (redirects revalidados pelo SSRF guard).
+	mediaHTTP = safeHTTPClient(30*time.Second, false)
+	// chatwootMediaHTTP baixa anexos do próprio Chatwoot (LAN permitida; esquema validado).
+	chatwootMediaHTTP = safeHTTPClient(30*time.Second, true)
+)
 
 // pairedSession devolve a sessão se existir E estiver pareada, ou escreve o erro.
 func (s *server) pairedSession(w http.ResponseWriter, sid string) *Session {
@@ -23,7 +28,7 @@ func (s *server) pairedSession(w http.ResponseWriter, sid string) *Session {
 	if sess == nil {
 		return nil
 	}
-	if sess.client.Store.ID == nil {
+	if sess.getClient().Store.ID == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "not paired"})
 		return nil
 	}
@@ -43,6 +48,8 @@ func resolveRecipient(to string) (types.JID, error) {
 }
 
 // fetchMedia obtém os bytes da mídia a partir de base64 (data) ou de uma URL.
+// Downloads por URL passam pelo guarda de SSRF (apenas http(s) públicos, salvo
+// WACALLS_ALLOW_PRIVATE_URLS=true para mídias hospedadas na própria LAN).
 func fetchMedia(b64, url string) ([]byte, error) {
 	if b64 != "" {
 		if strings.HasPrefix(b64, "data:") {
@@ -53,6 +60,9 @@ func fetchMedia(b64, url string) ([]byte, error) {
 		return base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
 	}
 	if url != "" {
+		if err := validateOutboundURL(url, false); err != nil {
+			return nil, err
+		}
 		resp, err := mediaHTTP.Get(url)
 		if err != nil {
 			return nil, err
@@ -66,13 +76,30 @@ func fetchMedia(b64, url string) ([]byte, error) {
 	return nil, errors.New("base64 or url required")
 }
 
+// fetchChatwootAttachment baixa anexo hospedado no próprio Chatwoot (URLs de
+// LAN/VPS privada são legítimas aqui — apenas o esquema é validado).
+func fetchChatwootAttachment(url string) ([]byte, error) {
+	if _, err := parseHTTPURL(url); err != nil {
+		return nil, err
+	}
+	resp, err := chatwootMediaHTTP.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("download failed: " + resp.Status)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 100<<20))
+}
+
 func (s *server) send(sess *Session, w http.ResponseWriter, r *http.Request, to string, msg *waE2E.Message) {
 	jid, err := resolveRecipient(to)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	resp, err := sess.client.SendMessage(r.Context(), jid, msg)
+	resp, err := sess.getClient().SendMessage(r.Context(), jid, msg)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -90,7 +117,7 @@ func (s *server) uploadMedia(sess *Session, w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return nil, false
 	}
-	up, err := sess.client.Upload(r.Context(), data, mt)
+	up, err := sess.getClient().Upload(r.Context(), data, mt)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return nil, false
@@ -233,7 +260,11 @@ func (s *server) handleSetWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	url := strings.TrimSpace(b.URL)
 	sess.setWebhook(url)
-	_ = sess.mgr.store.setWebhook(r.Context(), sess.id, url)
+	if err := sess.mgr.store.setWebhook(r.Context(), sess.id, url); err != nil {
+		sess.log.Error("falha ao persistir webhook", "session", sess.id, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "falha ao salvar webhook no banco"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"webhook": url})
 }
 
@@ -251,6 +282,10 @@ func (s *server) handleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess.setWebhook("")
-	_ = sess.mgr.store.setWebhook(r.Context(), sess.id, "")
+	if err := sess.mgr.store.setWebhook(r.Context(), sess.id, ""); err != nil {
+		sess.log.Error("falha ao remover webhook", "session", sess.id, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "falha ao remover webhook no banco"})
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

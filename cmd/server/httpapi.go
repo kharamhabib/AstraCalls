@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"wacalls/internal/voip/call"
@@ -25,7 +29,12 @@ import (
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 
+	// Health/liveness (fora de /api, sem auth — usado por Docker/Swarm/Traefik)
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /ready", s.handleReady)
+
 	mux.HandleFunc("GET /api/config", s.handleConfig)
+	mux.HandleFunc("GET /api/metrics", s.handleMetrics)
 	mux.HandleFunc("GET /api/sessions", s.handleSessionList)
 	mux.HandleFunc("POST /api/sessions", s.handleSessionCreate)
 	mux.HandleFunc("POST /api/sessions/{sid}/rename", s.handleSessionRename)
@@ -69,8 +78,13 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{sid}/ai-config", s.handleDeleteAIConfig)
 	mux.HandleFunc("POST /api/sessions/{sid}/tool-proxy", s.handleToolProxy)
 
+	// Proxy do Gemini (a API key nunca sai do servidor: o navegador conecta aqui)
+	mux.HandleFunc("GET /api/sessions/{sid}/gemini/ws", s.handleGeminiWS)
+	mux.HandleFunc("POST /api/sessions/{sid}/gemini/generateContent", s.handleGeminiGenerateContent)
+
 	mux.HandleFunc("GET /api/sessions/{sid}/contacts/{jid}", s.handleGetContactInfo)
 
+	mux.HandleFunc("POST /api/events/ticket", s.handleEventTicket)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
 	if s.staticDir != "" {
@@ -79,8 +93,11 @@ func (s *server) routes() http.Handler {
 		}
 	}
 	var handler http.Handler = mux
-	if key := os.Getenv("WACALLS_API_KEY"); key != "" {
-		handler = withAuth(handler, key)
+	apiKey := os.Getenv("WACALLS_API_KEY")
+	if apiKey != "" {
+		handler = withAuth(handler, apiKey, s.tickets, s.log)
+	} else {
+		s.log.Warn("WACALLS_API_KEY não definida — API completamente ABERTA. Qualquer um com acesso HTTP pode criar sessões, fazer chamadas e ler histórico. Defina a variável antes de expor o serviço.")
 	}
 
 	limiters := &apiLimiters{
@@ -89,13 +106,32 @@ func (s *server) routes() http.Handler {
 		calls:    NewRateLimiter(rate.Every(12*time.Second), 5),
 	}
 	handler = s.withRateLimit(handler, limiters)
+	handler = withBodyLimit(handler)
+	handler = withRequestLog(handler, s.log)
 
-	return withCORS(handler)
+	return withCORS(handler, s.log)
 }
 
-func withCORS(h http.Handler) http.Handler {
+// withCORS aplica a política de origens. WACALLS_CORS_ORIGINS (lista separada
+// por vírgula) restringe as origens permitidas; sem ela, mantém "*" (necessário
+// para o widget do Chatwoot em domínio diverso), com aviso se houver API key.
+func withCORS(h http.Handler, log *slog.Logger) http.Handler {
+	allowed := parseCSVEnv("WACALLS_CORS_ORIGINS")
+	if len(allowed) == 0 && os.Getenv("WACALLS_API_KEY") != "" {
+		log.Warn("WACALLS_CORS_ORIGINS não definida — CORS aberto (*). Restrinja para os domínios do painel/Chatwoot em produção.")
+	}
+	allowedSet := map[string]bool{}
+	for _, o := range allowed {
+		allowedSet[o] = true
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if len(allowedSet) == 0 {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else if origin != "" && allowedSet[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Client-Id, X-API-Key")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
@@ -106,10 +142,32 @@ func withCORS(h http.Handler) http.Handler {
 	})
 }
 
-// withAuth protege as rotas /api/* com uma API key (header X-API-Key ou ?apiKey=).
-// Exceções: o webhook do Chatwoot (chamado externamente pelo próprio Chatwoot)
+func parseCSVEnv(key string) []string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// withAuth protege as rotas /api/* com uma API key (header X-API-Key).
+// Alternativas de autenticação:
+//   - ?ticket= (uso único, 30s) para /api/events e /gemini/ws — fluxo preferido
+//     para clientes que não enviam headers (EventSource/WebSocket do navegador);
+//   - ?apiKey= (DEPRECADO: vaza em logs/histórico — mantido por compatibilidade).
+//
+// Exceções: o webhook do Chatwoot (autenticado por token próprio no handler)
 // e os arquivos estáticos do painel (precisam carregar a tela de login).
-func withAuth(h http.Handler, key string) http.Handler {
+func withAuth(h http.Handler, key string, tickets *ticketStore, log *slog.Logger) http.Handler {
+	var warnedQueryKey atomic.Bool
+	keyBytes := []byte(key)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		guarded := strings.HasPrefix(p, "/api/") && !strings.HasSuffix(p, "/chatwoot/webhook")
@@ -117,13 +175,72 @@ func withAuth(h http.Handler, key string) http.Handler {
 			got := r.Header.Get("X-API-Key")
 			if got == "" {
 				got = r.URL.Query().Get("apiKey")
+				if got != "" && warnedQueryKey.CompareAndSwap(false, true) {
+					log.Warn("autenticação via ?apiKey= em query string está DEPRECADA (vaza em logs de proxy e histórico). Migre para X-API-Key ou POST /api/events/ticket.")
+				}
 			}
-			if got != key {
+			authorized := subtle.ConstantTimeCompare([]byte(got), keyBytes) == 1
+			if !authorized {
+				// Ticket de uso único para conexões sem header (SSE / WebSocket)
+				tk := r.URL.Query().Get("ticket")
+				if tk != "" && (p == "/api/events" || strings.HasSuffix(p, "/gemini/ws")) && tickets.consume(tk) {
+					authorized = true
+				}
+			}
+			if !authorized {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}
 		}
 		h.ServeHTTP(w, r)
+	})
+}
+
+// withBodyLimit impõe teto de tamanho aos bodies (DoS por payload gigante).
+// Endpoints de mensagens aceitam mídia em base64 (teto maior); demais JSONs, 2MB.
+func withBodyLimit(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/") {
+			limit := int64(2 << 20) // 2 MB
+			if strings.Contains(r.URL.Path, "/messages/") {
+				limit = 200 << 20 // 200 MB (mídia em base64)
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// statusRecorder registra o status HTTP preservando http.Flusher (SSE).
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+func (sr *statusRecorder) Flush() {
+	if f, ok := sr.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// withRequestLog loga método, path, status e duração de cada requisição.
+// 5xx → Warn; demais → Debug (SSE de longa duração só aparece ao encerrar).
+func withRequestLog(h http.Handler, log *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		h.ServeHTTP(sr, r)
+		dur := time.Since(start)
+		if sr.status >= 500 {
+			log.Warn("http request", "method", r.Method, "path", r.URL.Path, "status", sr.status, "dur", dur)
+		} else {
+			log.Debug("http request", "method", r.Method, "path", r.URL.Path, "status", sr.status, "dur", dur)
+		}
 	})
 }
 
@@ -151,6 +268,66 @@ func (s *server) sessionByID(w http.ResponseWriter, sid string) *Session {
 
 func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	s.broker.serveSSE(w, r, clientID(r))
+}
+
+// handleEventTicket emite um ticket de uso único (30s) para autenticar a
+// conexão SSE/WebSocket sem expor a API key na URL.
+func (s *server) handleEventTicket(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"ticket": s.tickets.issue(), "ttl": 30})
+}
+
+// handleHealthz: liveness simples (processo no ar).
+func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleReady: readiness — verifica conectividade com o Postgres principal.
+func (s *server) handleReady(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := s.mainDB.PingContext(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready", "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+// handleMetrics: telemetria operacional básica (autenticada).
+func (s *server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	infos := s.sessions.infos()
+	paired := 0
+	for _, i := range infos {
+		if i.Paired {
+			paired++
+		}
+	}
+	activeCalls := 0
+	s.sessions.mu.RLock()
+	for _, sess := range s.sessions.sessions {
+		activeCalls += sess.reg.count()
+	}
+	s.sessions.mu.RUnlock()
+
+	s.scheduler.mu.Lock()
+	activeAgents := len(s.scheduler.agents)
+	s.scheduler.mu.Unlock()
+
+	dbStats := s.mainDB.Stats()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"uptimeSeconds":    int64(time.Since(s.startedAt).Seconds()),
+		"sessions":         len(infos),
+		"sessionsPaired":   paired,
+		"activeCalls":      activeCalls,
+		"activeAIAgents":   activeAgents,
+		"goroutines":       runtime.NumGoroutine(),
+		"scheduledPending": atomic.LoadInt64(&s.scheduler.activeCount),
+		"db": map[string]any{
+			"openConnections": dbStats.OpenConnections,
+			"inUse":           dbStats.InUse,
+			"idle":            dbStats.Idle,
+			"waitCount":       dbStats.WaitCount,
+		},
+	})
 }
 
 func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -295,14 +472,14 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		jid, err := types.ParseJID(row.Peer)
 		if err == nil {
 			phone = jid.User
-			if jid.Server == "lid" && sess.client != nil && sess.client.Store.LIDs != nil {
-				if pn, err := sess.client.Store.LIDs.GetPNForLID(r.Context(), jid); err == nil && !pn.IsEmpty() {
+			if jid.Server == "lid" && sess.getClient() != nil && sess.getClient().Store.LIDs != nil {
+				if pn, err := sess.getClient().Store.LIDs.GetPNForLID(r.Context(), jid); err == nil && !pn.IsEmpty() {
 					phone = pn.User
 					jid = pn
 				}
 			}
-			if sess.client != nil {
-				if contact, err := sess.client.Store.Contacts.GetContact(r.Context(), jid); err == nil && contact.Found {
+			if sess.getClient() != nil {
+				if contact, err := sess.getClient().Store.Contacts.GetContact(r.Context(), jid); err == nil && contact.Found {
 					if contact.FullName != "" {
 						name = contact.FullName
 					} else if contact.PushName != "" {
@@ -362,30 +539,25 @@ func (s *server) handleOpenTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	rec, ok := s.broker.getCall(callID)
-	if ok {
-		rec.TicketOpened = true
-		rec.TicketReason = body.Reason
-		s.broker.upsertCall(*rec)
-	}
+	rec, ok := s.broker.openTicket(callID, body.Reason)
 
 	// Notifica via WhatsApp admin se configurado
 	config := sess.getAIConfig()
 	if config.PostCall.SendAdmin && config.PostCall.AdminNumber != "" {
-		go func() {
+		goSafe(s.log, func() {
 			adminJid, err := resolveRecipient(config.PostCall.AdminNumber)
 			if err == nil {
-				peer := callID // fallback
-				if ok {
+				peer := callID
+				if ok && rec.Peer != "" {
 					peer = rec.Peer
 				}
 				contactName := resolveContactPhoneRaw(context.Background(), sess, peer)
 				msg := fmt.Sprintf("⚠️ *Novo Chamado Aberto pela IA (Local)*\n\n• *Cliente:* %s\n• *Sessão:* %s\n• *Motivo:* %s\n• *ID Chamada:* %s", contactName, sess.name, body.Reason, callID)
-				_, _ = sess.client.SendMessage(context.Background(), adminJid, &waE2E.Message{
+				_, _ = sess.getClient().SendMessage(context.Background(), adminJid, &waE2E.Message{
 					Conversation: proto.String(msg),
 				})
 			}
-		}()
+		})
 	}
 	
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ticket saved"})
@@ -416,8 +588,8 @@ func resolveContactPhoneRaw(ctx context.Context, sess *Session, peer string) str
 	if err != nil {
 		return peer
 	}
-	if jid.Server == "lid" && sess.client != nil && sess.client.Store.LIDs != nil {
-		if pn, e := sess.client.Store.LIDs.GetPNForLID(ctx, jid); e == nil && !pn.IsEmpty() {
+	if jid.Server == "lid" && sess.getClient() != nil && sess.getClient().Store.LIDs != nil {
+		if pn, e := sess.getClient().Store.LIDs.GetPNForLID(ctx, jid); e == nil && !pn.IsEmpty() {
 			return pn.User
 		}
 	}
@@ -425,7 +597,7 @@ func resolveContactPhoneRaw(ctx context.Context, sess *Session, peer string) str
 }
 
 func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Request) {
-	if sess.client.Store.ID == nil {
+	if sess.getClient().Store.ID == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "not paired"})
 		return
 	}
@@ -477,32 +649,9 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 			if body.Greeting != "" {
 				agentConfig.FirstUtterance = body.Greeting
 			}
-
-			originalOnState := ac.cm.OnStateChange
-			ac.cm.OnStateChange = func(info *call.CallInfo) {
-				if originalOnState != nil {
-					originalOnState(info)
-				}
-				if info.IsEnded() {
-					return
-				}
-				if info.StateData.State == core.CallStateActive {
-					// Chamada conectada — acopla o agente de voz server-side
-					go func() {
-						agent := NewServerAIAgent(sess, callID, body.Phone, "outbound", ac.cm, agentConfig, s.log)
-						if err := agent.Start(context.Background()); err != nil {
-							s.log.Error("[ServerAI] Erro ao iniciar agente manual", "err", err, "callId", callID)
-							return
-						}
-						if sess.mgr.Scheduler != nil {
-							sess.mgr.Scheduler.mu.Lock()
-							sess.mgr.Scheduler.agents[callID] = agent
-							sess.mgr.Scheduler.mu.Unlock()
-						}
-						s.log.Info("[ServerAI] Agente IA acoplado à chamada manual", "callId", callID)
-					}()
-				}
-			}
+			sess.attachServerAI(ac.cm, callID, "outbound", agentConfig, func(info *call.CallInfo) string {
+				return body.Phone
+			})
 		}
 	}
 
@@ -594,39 +743,15 @@ func (s *server) doAccept(sess *Session, w http.ResponseWriter, r *http.Request)
 	s.broker.emitIncomingClaimed(sess.id, id, owner)
 
 	if isServerAI {
-		originalOnState := ac.cm.OnStateChange
-		ac.cm.OnStateChange = func(info *call.CallInfo) {
-			if originalOnState != nil {
-				originalOnState(info)
+		sess.attachServerAI(ac.cm, id, "inbound", config, func(info *call.CallInfo) string {
+			peerPhone := info.PeerJid
+			if info.CallerPn != "" {
+				peerPhone = info.CallerPn
+			} else if jid, err := types.ParseJID(peerPhone); err == nil {
+				peerPhone = sess.realPhone(jid)
 			}
-			if info.IsEnded() {
-				return
-			}
-			if info.StateData.State == core.CallStateActive {
-				// Chamada conectada — acopla o agente de voz server-side
-				go func() {
-					peerPhone := info.PeerJid
-					if info.CallerPn != "" {
-						peerPhone = info.CallerPn
-					} else {
-						if jid, err := types.ParseJID(peerPhone); err == nil {
-							peerPhone = sess.realPhone(jid)
-						}
-					}
-					agent := NewServerAIAgent(sess, id, peerPhone, "inbound", ac.cm, config, s.log)
-					if err := agent.Start(context.Background()); err != nil {
-						s.log.Error("[ServerAI] Erro ao iniciar agente manual inbound", "err", err, "callId", id)
-						return
-					}
-					if sess.mgr.Scheduler != nil {
-						sess.mgr.Scheduler.mu.Lock()
-						sess.mgr.Scheduler.agents[id] = agent
-						sess.mgr.Scheduler.mu.Unlock()
-					}
-					s.log.Info("[ServerAI] Agente IA acoplado à chamada recebida manual", "callId", id)
-				}()
-			}
-		}
+			return peerPhone
+		})
 	}
 
 	if err := ac.cm.AcceptCall(r.Context(), id); err != nil {
@@ -675,7 +800,7 @@ func (s *server) handleGetContactInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var name string
-	contact, err := sess.client.Store.Contacts.GetContact(r.Context(), jid)
+	contact, err := sess.getClient().Store.Contacts.GetContact(r.Context(), jid)
 	if err == nil && contact.Found {
 		if contact.FullName != "" {
 			name = contact.FullName
@@ -690,7 +815,7 @@ func (s *server) handleGetContactInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var pictureURL string
-	pfp, err := sess.client.GetProfilePictureInfo(r.Context(), jid, &whatsmeow.GetProfilePictureParams{
+	pfp, err := sess.getClient().GetProfilePictureInfo(r.Context(), jid, &whatsmeow.GetProfilePictureParams{
 		Preview: true,
 	})
 	if err == nil && pfp != nil {
@@ -768,15 +893,58 @@ func (rl *RateLimiter) getLimiter(ip string) *rate.Limiter {
 	return cl.limiter
 }
 
-func getClientIP(r *http.Request) string {
-	xff := r.Header.Get("X-Forwarded-For")
-	if xff != "" {
-		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[0])
+// trustedProxies é calculado uma vez a partir de WACALLS_TRUSTED_PROXIES
+// (IPs ou CIDRs separados por vírgula). X-Forwarded-For só é honrado quando o
+// peer direto é um proxy confiável — caso contrário qualquer cliente poderia
+// spoofar o header e bypassar o rate limit.
+var (
+	trustedProxiesOnce sync.Once
+	trustedCIDRs       []*net.IPNet
+	trustedIPs         map[string]bool
+)
+
+func loadTrustedProxies() {
+	trustedProxiesOnce.Do(func() {
+		trustedIPs = map[string]bool{}
+		for _, entry := range parseCSVEnv("WACALLS_TRUSTED_PROXIES") {
+			if _, cidr, err := net.ParseCIDR(entry); err == nil {
+				trustedCIDRs = append(trustedCIDRs, cidr)
+				continue
+			}
+			if ip := net.ParseIP(entry); ip != nil {
+				trustedIPs[ip.String()] = true
+			}
+		}
+	})
+}
+
+func isTrustedProxy(ip string) bool {
+	loadTrustedProxies()
+	if trustedIPs[ip] {
+		return true
 	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, cidr := range trustedCIDRs {
+		if cidr.Contains(parsed) {
+			return true
+		}
+	}
+	return false
+}
+
+func getClientIP(r *http.Request) string {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		ip = r.RemoteAddr
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" && isTrustedProxy(ip) {
+		parts := strings.Split(xff, ",")
+		if first := strings.TrimSpace(parts[0]); first != "" {
+			return first
+		}
 	}
 	return ip
 }

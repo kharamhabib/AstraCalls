@@ -6,6 +6,7 @@ export type ChatwootConfig = {
   account_token?: string;
   inbox_id: number;
   inbox_identifier: string;
+  webhook_secret?: string; // token que autentica o POST .../chatwoot/webhook
 };
 
 export const getChatwoot = (sid: string) =>

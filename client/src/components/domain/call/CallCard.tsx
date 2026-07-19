@@ -5,12 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { attachMeter } from "@/lib/audio-meter";
+import { useNow } from "@/lib/use-now";
 import { useCalls } from "@/stores/calls";
 import { useDevices } from "@/stores/devices";
 import { useEndCall } from "@/hooks/useEndCall";
 import { formatCallDuration } from "@/utils/format";
 import type { CallStatus, CallSummary } from "@/types/call";
-import { useAIAgents } from "@/stores/ai";
+import { useAIAgents, type TranscriptLine } from "@/stores/ai";
 import { getAIConfig } from "@/services/ai";
 import type { AIConfig } from "@/types/ai";
 import { toast } from "sonner";
@@ -46,7 +47,7 @@ const Meter = ({ label, db }: { label: string; db: number }) => {
   );
 };
 
-const EMPTY_TRANSCRIPT: any[] = [];
+const EMPTY_TRANSCRIPT: TranscriptLine[] = [];
 
 function getInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -60,7 +61,7 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const conn = useCalls((s) => s.ownConnections.get(call.callId));
   const outDeviceId = useDevices((s) => s.outId);
   const endCall = useEndCall();
-  const [, force] = useState(0);
+  useNow(); // relógio compartilhado: re-render 1x/s para cronômetro/countdown
   const [micDb, setMicDb] = useState(-60);
   const [peerDb, setPeerDb] = useState(-60);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -72,11 +73,6 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const transcripts = useAIAgents((s) => s.transcripts[call.callId] || EMPTY_TRANSCRIPT);
 
   const { data: contact } = useContactInfo(call.sessionId, call.peer);
-
-  useEffect(() => {
-    const t = setInterval(() => force((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
 
   useEffect(() => {
     getAIConfig(call.sessionId)
@@ -215,12 +211,12 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
                     console.log("[CallCard] Clicou para encerrar chamada:", { sid: call.sessionId, callId: call.callId });
                     endCall.mutate({ sid: call.sessionId, callId: call.callId });
                   }}
-                  aria-label="End call"
+                  aria-label="Encerrar chamada"
                 >
                   <PhoneOff className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>End call</TooltipContent>
+              <TooltipContent>Encerrar chamada</TooltipContent>
             </Tooltip>
           </div>
         </div>

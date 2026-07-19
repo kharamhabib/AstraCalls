@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -56,6 +57,26 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 
 	// Criar índice para buscas rápidas por sessão e chamada
 	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_call_transcripts_session_call ON call_transcripts(session_id, call_id)`)
+
+	// Histórico de chamadas persistido (o cache em memória do broker é hidratado
+	// a partir desta tabela no boot — summaries e chamados sobrevivem a restarts).
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS call_history (
+		session_id    TEXT NOT NULL,
+		call_id       TEXT NOT NULL,
+		owner         TEXT,
+		direction     TEXT NOT NULL,
+		peer          TEXT NOT NULL,
+		started_at    BIGINT NOT NULL,
+		ended_at      BIGINT,
+		end_reason    TEXT,
+		summary       TEXT,
+		ticket_opened BOOLEAN NOT NULL DEFAULT FALSE,
+		ticket_reason TEXT,
+		PRIMARY KEY (session_id, call_id)
+	)`)
+	if err != nil {
+		return nil, fmt.Errorf("criar tabela call_history: %w", err)
+	}
 
 	return &sessionStore{db: db}, nil
 }
@@ -139,8 +160,12 @@ func (s *sessionStore) saveTranscript(ctx context.Context, sessionID, callID str
 	defer stmt.Close()
 
 	now := time.Now()
-	for i, line := range lines {
-		lineTime := now.Add(time.Duration(i) * time.Second)
+	for _, line := range lines {
+		// Usa o timestamp real da fala quando disponível; senão, o momento do save.
+		lineTime := now
+		if line.At > 0 {
+			lineTime = time.UnixMilli(line.At)
+		}
 		_, err = stmt.ExecContext(ctx, sessionID, callID, line.Speaker, line.Text, lineTime)
 		if err != nil {
 			return err
@@ -170,4 +195,114 @@ func (s *sessionStore) getTranscript(ctx context.Context, sessionID, callID stri
 		out = append(out, line)
 	}
 	return out, rows.Err()
+}
+
+// ---- Histórico de chamadas persistido ----
+
+// saveCallHistory faz upsert do registro encerrado na tabela call_history.
+func (s *sessionStore) saveCallHistory(ctx context.Context, rec CallRecord) error {
+	var endedAt *int64
+	if rec.EndedAt != nil {
+		endedAt = rec.EndedAt
+	}
+	var owner *string
+	if rec.Owner != nil {
+		owner = rec.Owner
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO call_history (session_id, call_id, owner, direction, peer, started_at, ended_at, end_reason, summary, ticket_opened, ticket_reason)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		ON CONFLICT (session_id, call_id) DO UPDATE SET
+			owner = EXCLUDED.owner,
+			ended_at = EXCLUDED.ended_at,
+			end_reason = EXCLUDED.end_reason,
+			summary = COALESCE(NULLIF(EXCLUDED.summary, ''), call_history.summary),
+			ticket_opened = call_history.ticket_opened OR EXCLUDED.ticket_opened,
+			ticket_reason = COALESCE(NULLIF(EXCLUDED.ticket_reason, ''), call_history.ticket_reason)
+	`, rec.SessionID, rec.CallID, owner, rec.Direction, rec.Peer, rec.StartedAt, endedAt, rec.EndReason, rec.Summary, rec.TicketOpened, rec.TicketReason)
+	return err
+}
+
+// listCallHistory devolve os registros mais recentes de uma sessão (ordem cronológica).
+func (s *sessionStore) listCallHistory(ctx context.Context, sessionID string, limit int) ([]CallRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT session_id, call_id, owner, direction, peer, started_at, ended_at,
+		       COALESCE(end_reason,''), COALESCE(summary,''), ticket_opened, COALESCE(ticket_reason,'')
+		FROM call_history
+		WHERE session_id = $1
+		ORDER BY started_at DESC
+		LIMIT $2
+	`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []CallRecord
+	for rows.Next() {
+		var rec CallRecord
+		var owner *string
+		var endedAt *int64
+		if err := rows.Scan(&rec.SessionID, &rec.CallID, &owner, &rec.Direction, &rec.Peer, &rec.StartedAt, &endedAt, &rec.EndReason, &rec.Summary, &rec.TicketOpened, &rec.TicketReason); err != nil {
+			return nil, err
+		}
+		rec.Owner = owner
+		rec.EndedAt = endedAt
+		rec.Status = StatusEnded
+		out = append(out, rec)
+	}
+	// inverte para ordem cronológica (mais antigo primeiro), igual ao cache do broker
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, rows.Err()
+}
+
+// updateCallSummary persiste o resumo de uma chamada do histórico.
+func (s *sessionStore) updateCallSummary(ctx context.Context, sessionID, callID, summary string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE call_history SET summary = $3 WHERE session_id = $1 AND call_id = $2`, sessionID, callID, summary)
+	return err
+}
+
+// updateCallTicket persiste a abertura de chamado de uma chamada do histórico.
+func (s *sessionStore) updateCallTicket(ctx context.Context, sessionID, callID, reason string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE call_history SET ticket_opened = TRUE, ticket_reason = $3 WHERE session_id = $1 AND call_id = $2`, sessionID, callID, reason)
+	return err
+}
+
+// pgHistoryPersister adapta o sessionStore à interface HistoryPersister do broker.
+// Falhas são logadas e engolidas: o cache em memória segue autoritativo em runtime.
+type pgHistoryPersister struct {
+	store *sessionStore
+	log   *slog.Logger
+}
+
+func (p *pgHistoryPersister) SaveCall(rec CallRecord) {
+	goSafe(p.log, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := p.store.saveCallHistory(ctx, rec); err != nil {
+			p.log.Error("falha ao persistir histórico da chamada", "callId", rec.CallID, "err", err)
+		}
+	})
+}
+
+func (p *pgHistoryPersister) SaveSummary(sessionID, callID, summary string) {
+	goSafe(p.log, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := p.store.updateCallSummary(ctx, sessionID, callID, summary); err != nil {
+			p.log.Error("falha ao persistir resumo da chamada", "callId", callID, "err", err)
+		}
+	})
+}
+
+func (p *pgHistoryPersister) SaveTicket(sessionID, callID, reason string) {
+	goSafe(p.log, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := p.store.updateCallTicket(ctx, sessionID, callID, reason); err != nil {
+			p.log.Error("falha ao persistir chamado da chamada", "callId", callID, "err", err)
+		}
+	})
 }

@@ -65,19 +65,23 @@ astracall/AstraCalls/
 ├── cmd/
 │   ├── migrate/                     # Migrações e setup do PostgreSQL
 │   └── server/                      # Servidor Go Principal
-│       ├── ai_agent.go              # [NOVO] Agente de voz server-side (WA<->Gemini + tools + post-call)
-│       ├── ai_scheduler.go          # [NOVO] Scheduler background de ligações programadas do servidor
+│       ├── ai_agent.go              # Agente de voz server-side (WA<->Gemini + tools + post-call)
+│       ├── ai_scheduler.go          # Scheduler background de ligações programadas do servidor
 │       ├── aiconfig.go              # Handlers REST de configuração da IA
-│       ├── gemini_live.go           # [NOVO] Cliente WebSocket nativo em Go para a API Gemini Live
-│       ├── httpapi.go               # Definição e rotas da API HTTP/WebRTC e SSE
-│       ├── server.go                # Inicialização do servidor e acoplamento do scheduler
-│       ├── session.go               # Estado de conexão ativa do WhatsApp, VoIP e auto-atendimento server-side
+│       ├── authticket.go            # [NOVO] Tickets de uso único (30s) p/ SSE/WebSocket sem key na URL
+│       ├── gemini_live.go           # Cliente WebSocket nativo em Go para a API Gemini Live
+│       ├── gemini_proxy.go          # [NOVO] Proxy WS/REST do Gemini (a key nunca sai do servidor)
+│       ├── httpapi.go               # Rotas da API HTTP/WebRTC, SSE, auth, CORS, rate limit, health/metrics
+│       ├── safehttp.go              # [NOVO] Guarda anti-SSRF (validação de URL/DNS/IP + redirects)
+│       ├── util.go                  # [NOVO] goSafe (goroutine c/ recover), retry HTTP, helper de fuso
+│       ├── server.go                # Inicialização do servidor + hidratação do histórico
+│       ├── session.go               # Estado WhatsApp/VoIP, auto-atendimento, attachServerAI
 │       ├── sessionmanager.go        # Ciclo de vida e restauração de sessões do banco
-│       └── sessionstore.go          # Operações de banco (Postgres)
+│       └── sessionstore.go          # Operações de banco (Postgres) + call_history + transcrições
 ├── internal/
 │   └── voip/
 │       ├── call/                    # Máquina de estados das chamadas e CallManager (CGO + Mutexes)
-│       │   ├── callmanager.go       # Gerenciador de chamada e sincronização de concorrência
+│       │   ├── callmanager.go       # Gerenciador + listeners de estado thread-safe (AddStateListener)
 │       │   ├── callmanager_media.go # Processamento de fluxos RTP e de-duplicação de pacotes
 │       │   └── callstate.go         # Definição dos estados e transições de chamadas
 │       ├── media/                   # Decodificação Opus/PCM e manipulação de fluxos RTP
@@ -95,7 +99,16 @@ astracall/AstraCalls/
 │       │   ├── useAICallHandler.ts  # Hook de atendimento automático (com suporte a serverSideAI)
 │       │   └── useAICallScheduler.ts# Hook de disparo de ligações programadas no client
 │       ├── lib/
-│       │   ├── gemini-live.ts       # WebSocket Gemini, PCMPlayer e WebRTC Bridge (Client-side)
+│       │   ├── ai/                  # [NOVO] Módulos da IA client-side (antes gemini-live.ts monolítico)
+│       │   │   ├── agent.ts         # GeminiLiveAgent (orquestrador WebRTC + tools + pós-chamada)
+│       │   │   ├── gemini-session.ts# GeminiLiveSession (WS Gemini, direto ou via proxy do backend)
+│       │   │   ├── pcm-utils.ts     # PCMPlayer + conversões base64/PCM
+│       │   │   ├── default-prompts.ts # Fonte única dos prompts padrão das tools
+│       │   │   └── scheduled-calls.ts # parseScheduledCalls (módulo leve, fora do chunk do agente)
+│       │   ├── gemini-live.ts       # Barrel de compatibilidade (re-exporta lib/ai/*)
+│       │   ├── event-stream.ts      # SSE com ticket de uso único + reconexão manual c/ backoff
+│       │   ├── use-now.ts           # [NOVO] Relógio global compartilhado (1 timer p/ cronômetros)
+│       │   ├── audio-meter.ts       # Medidores de áudio com AudioContext singleton
 │       │   └── webrtc.ts            # Gerenciador de conexão RTCPeerConnection local
 │       ├── stores/
 │       │   └── ai.ts                # Estado global Zustand de IA e transcrições
@@ -110,7 +123,7 @@ astracall/AstraCalls/
 O RockCall suporta duas arquiteturas para processamento e transmissão de áudio da chamada para a IA:
 
 ### 4.1 Modo Client-Side (Bridge no Navegador)
-A ponte de áudio opera inteiramente do lado do cliente (no navegador do operador). Isso elimina latência de transporte no backend e simplifica a infraestrutura de rede.
+A ponte de áudio opera inteiramente do lado do cliente (no navegador do operador). Isso elimina latência de transporte no backend e simplifica a infraestrutura de rede. **A conexão WebSocket com o Gemini Live passa pelo proxy do backend** (`/api/sessions/{sid}/gemini/ws`, autenticado por ticket de uso único) sempre que a API key estiver mascarada no GET do ai-config — a key real não é mais exposta ao navegador (ver seção 6.1). O fluxo de áudio permanece:
      "realtimeInput": {
        "audio": {
          "data": "BASE64_PCM_DATA...",
@@ -200,6 +213,64 @@ Para suportar chamadas simultâneas estáveis diretamente no servidor e evitar t
 * **Prevenção de State Lock na Conexão ICE (State Machine)**: Em conexões rápidas entre servidores, a ponte de áudio (ICE) pode se estabelecer antes do aceite de sinalização da chamada ser totalmente processado em XML. Ajustamos o `HandleCallAccept` para aplicar a transição intermediária `TransitionRemoteAccepted` caso a chamada ainda esteja em `CallStateRinging`, assegurando que o estado mude estavelmente para ativo e o agente de IA (`ServerAIAgent`) acople normalmente.
 * **Roteamento de Sinalização VoIP com JID Intacto**: Para que as stanzas de aceitação (`accept` e `preaccept`) e rejeição (`reject`) sejam entregues com sucesso ao dispositivo companheiro chamador (ex: `:74` no VPS de origem), a tag raiz `<call to="...">` é endereçada diretamente para o JID do dispositivo do par (`peerJid` intacto com sufixo) em vez de ser limpa via `CleanJID`. Isso impede que o servidor do WhatsApp envie a confirmação apenas para o dispositivo móvel principal (`:0`), destravando a transição de estado no chamador em ligações Server-to-Server.
 
+---
+
+## 6.1 Segurança da API e das Integrações (Hardening)
+
+Camada de proteção adicionada em torno da API HTTP e das integrações externas:
+
+* **Webhook do Chatwoot autenticado por token**: O endpoint `POST /api/sessions/{sid}/chatwoot/webhook` (que envia mensagens WhatsApp a partir do Chatwoot) exige agora um **segredo por sessão** (`WebhookSecret`, hex de 20 bytes, gerado automaticamente na configuração ou na primeira leitura de configs antigas). O token é validado em **tempo constante** (`crypto/subtle`) via header `X-Chatwoot-Token` ou `?token=`. A URL exibida na UI para colar no Chatwoot já inclui o `?token=...`. Antes, qualquer um que soubesse o `sid` podia disparar mensagens arbitrárias em nome da sessão.
+* **Guarda anti-SSRF (`safehttp.go`)**: Toda URL fornecida por cliente da API passa por `validateOutboundURL`: exige esquema `http/https`, resolve o DNS e rejeita qualquer destino que resolva para IP não público (loopback, RFC1918, link-local — incluindo o metadata de cloud `169.254.169.254` — CGNAT, multicast e reservados). Redirects são revalidados um a um (máx. 5). Aplicado ao `/tool-proxy` e ao download de mídia por URL. Webhooks configurados pelo operador e anexos do próprio Chatwoot validam apenas o esquema (LAN legítima). Escape hatch: `WACALLS_ALLOW_PRIVATE_URLS=true`.
+* **SSE e WebSocket sem API key na URL (tickets de uso único)**: `POST /api/events/ticket` (autenticado por `X-API-Key`) emite um ticket aleatório de **uso único com TTL de 30s**. O app React, o widget do Chatwoot e o proxy do Gemini (`/gemini/ws`) autenticam via `?ticket=`, eliminando a key em query strings (que vazava em logs de proxy, histórico do navegador e no console). Como o ticket é de uso único, a reconexão é **manual**: cada tentativa emite um ticket novo, com backoff exponencial até 30s e indicador de status na UI. O fluxo legado `?apiKey=` continua funcionando, mas loga um warning de deprecação.
+* **Proxy do Gemini no backend**: No modo client-side, a API key do Gemini **nunca mais sai do servidor**. O navegador conecta em `GET /api/sessions/{sid}/gemini/ws` (proxy WebSocket bidirecional que injeta a key na conexão com o Google) e o resumo pós-chamada usa `POST /api/sessions/{sid}/gemini/generateContent` (proxy REST). O frontend detecta a key mascarada (`•`) no GET do ai-config e usa o proxy automaticamente; keys reais (configs antigas) ainda conectam direto no Google.
+* **Comparação de API key em tempo constante** e **warning de startup** quando `WACALLS_API_KEY` está vazia (API aberta).
+* **CORS configurável**: `WACALLS_CORS_ORIGINS` (lista por vírgula) restringe as origens refletidas; sem ela, mantém `*` com warning em log quando há API key.
+* **Rate limit à prova de spoof**: `X-Forwarded-For` só é honrado quando o peer direto está em `WACALLS_TRUSTED_PROXIES` (IPs/CIDRs); caso contrário usa o `RemoteAddr`.
+* **Teto de body**: `http.MaxBytesReader` em todos os POSTs da API (2MB para JSONs; 200MB para `/messages/*` com mídia base64; 5MB na resposta do tool-proxy).
+* **Segredos sanitizados**: o `.env.example` não contém mais tokens reais; o segredo do webhook do Chatwoot e a Gemini key não são devolvidos integralmente pela API.
+
+## 6.2 Robustez do Servidor
+
+* **Timeouts no `http.Server`**: `ReadHeaderTimeout=10s`, `ReadTimeout=30s`, `IdleTimeout=120s` (WriteTimeout permanece 0 por causa do SSE) — proteção contra Slowloris.
+* **Timeout no handshake do Gemini Live**: `connectAndSetup` aguarda o `setupComplete` por no máximo 15s (antes podia travar a goroutine para sempre numa rede presa). O cliente TypeScript também rejeita a promise de `connect()` se o WebSocket fechar antes do `setupComplete`.
+* **`goSafe` em goroutines soltas**: helper com `recover` + log aplicado às goroutines de offer/accept/terminate, webhooks, notificações e agentes — um panic não derruba mais o processo.
+* **Retries com backoff nas notificações**: webhooks de sessão e webhook pós-chamada fazem até 3 tentativas (500ms/2s/5s) em erros de rede e 5xx, com semáforo de 32 entregas simultâneas (antes: uma goroutine por evento, sem retry e perda silenciosa).
+* **Shutdown gracioso completo**: no SIGTERM/SIGINT, o servidor para o `AIScheduler`, desacopla todos os agentes IA (fechando sessões Gemini Live), drena o HTTP e desconecta as sessões WhatsApp e bancos.
+* **Timeout na coleta ICE**: o handshake WebRTC (Go e frontend/widget) tem teto de 10s, com remoção correta dos listeners.
+
+## 6.3 Concorrência e Consistência de Estado
+
+* **Listeners de estado thread-safe no `CallManager`**: os campos-callback (`OnStateChange`, `OnPeerAudio`, `OnIncoming`, `OnEnded`) foram privatizados atrás de `cbMu` (RWMutex). Estado agora é uma **lista de listeners** (`AddStateListener`): cada interessado (broker, agente IA) registra o seu, eliminando o padrão "ler → embrulhar → reatribuir" que tinha **data race** e podia perder wrappers concorrentes (auto-atendimento vs. operador humano). O `emitState` adquire os locks internamente e invoca os handlers **sem segurar `m.mu`**, removendo a armadilha de deadlock (listener chamando métodos do próprio CallManager).
+* **`attachServerAI` único**: o bloco "acoplar agente quando a chamada ficar ativa" (antes duplicado 4× com lógicas divergentes) virou um método de `Session` usado pelo aceite manual, pela chamada de saída, pelo auto-atendimento e pelo scheduler — com guarda `sync.Once` (o estado Active pode ser emitido mais de uma vez) e `goSafe`.
+* **`Session.client` atômico**: `atomic.Pointer[whatsmeow.Client]` — `replaceClient` (logout/pair) não corria mais com handlers HTTP e eventos lendo o cliente.
+* **Bridge/codec lidos sob lock**: `callRegistry.getBridge` serializa o acesso a `bridge`/`browserOpus` (escritos por `setBridge`/`removeCall`).
+* **Mutações atômicas no broker**: `updateCall` e `openTicket` substituem o padrão get→muta→upsert (lost update) ao marcar chamados; ambos persistem no Postgres.
+* **Testes de corrida**: `listeners_test.go` valida listeners/setters sob concorrência; toda a suíte roda limpa com `go test -race`.
+
+## 6.4 Observabilidade
+
+* **`GET /healthz`** (liveness) e **`GET /ready`** (readiness com ping no Postgres principal) — sem auth, prontos para Docker/Swarm/Traefik.
+* **`GET /api/metrics`** (autenticado): uptime, sessões (total/pareadas), chamadas ativas, agentes IA ativos, agendamentos pendentes, goroutines e estatísticas do pool do banco.
+* **Request logging**: middleware registra método, path, status e duração (Warn para 5xx, Debug para o restante), preservando `http.Flusher` para o SSE.
+* **`WACALLS_LOG_LEVEL`** (debug|info|warn|error) com precedência sobre a flag `-debug`; falhas de webhook agora logam em nível Warn (antes Debug, invisível).
+* **Indicador de conexão SSE na UI**: badge no header do painel mostra Conectado/Reconectando/Desconectado (antes, uma queda de SSE fazia o operador parar de receber chamadas silenciosamente).
+
+## 6.5 Persistência do Histórico de Chamadas
+
+* **Tabela `call_history`** (banco principal): sessão, call ID, owner, direção, peer, início/fim, motivo do encerramento, resumo e chamado. O broker persiste cada chamada encerrada (upsert), cada resumo e cada abertura de chamado via `HistoryPersister` (escrita assíncrona com `goSafe`; falhas são logadas e não bloqueiam o fluxo da chamada).
+* **Hidratação no boot**: após o `Restore`, o servidor carrega os últimos 100 registros por sessão do Postgres para o cache em memória do broker — **resumos e chamados sobrevivem a restarts** (antes viviam só em RAM e sumiam).
+* **Timestamps reais na transcrição**: cada linha de transcrição carrega o instante real da fala (`At`), usado no `created_at` do `call_transcripts` (antes era `now + i*1s` fabricado). O resumo pós-chamada usa o horário real de início da chamada (antes: estimativa "agora − 5min").
+* **Erros de persistência não são mais silenciados**: os handlers de config (ai-config, chatwoot, webhook) e o agendamento via tool retornam 500 se o Postgres falhar, em vez de responder 200 e perder a config no próximo restart.
+
+## 6.6 Qualidade do Frontend
+
+* **Modularização do `gemini-live.ts`** (1.092 linhas → `lib/ai/*`): `gemini-session.ts` (WS + setup/tools tipados), `agent.ts` (orquestrador), `pcm-utils.ts`, `default-prompts.ts` (fonte única — elimina a duplicação com o AIDialog e o typo "reuniõe") e `scheduled-calls.ts` (parse centralizado). O arquivo antigo virou um barrel de compatibilidade e o agente carrega por **import dinâmico** (chunk separado de ~23KB).
+* **Correções de estado (Zustand)**: eliminada a mutação in-place do `Map` de agentes (UI não rerenderizava) e adicionada a limpeza de transcrições no encerramento da chamada (leak crescente por chamada).
+* **Recursos liberados em erro**: mic e `RTCPeerConnection` são fechados nos catches de `startCall`/`acceptIncoming` (app e widget) — o LED do microfone não fica mais aceso em chamadas abortadas.
+* **`AudioContext` singleton** nos medidores (o Chrome limita ~6 por origem; antes cada card criava 2-3) e **relógio global** `useNow` substituindo os três `setInterval(force, 1000)`.
+* **Higiene de bundle e tipos**: `agentation` movido para devDependencies com import dinâmico; removidos pacotes Radix não utilizados; `chatwootEnabled` tipado em `AIConfig` (adeus casts `as any`); `ChatwootForm` único compartilhado entre dialog e settings.
+* **Widget do Chatwoot**: SSE por ticket com reconexão e backoff (a key não aparece mais na URL nem no console), escape de HTML completo, timeout de ICE, `MutationObserver` com debounce de 400ms (sem o `setInterval` redundante), `role="dialog"`, `aria-label`s, `aria-live` na transcrição, Esc fecha o painel fora de chamada e mensagem amigável quando o microfone é negado.
+
 
 
 
@@ -212,7 +283,7 @@ O sistema conta com uma integração profissional para a plataforma de atendimen
 ### 7.1 Widget Flutuante (`widget.js`)
 O script injetado na interface do Chatwoot (`super_admin > app_config > internal`) insere um controle global de telefonia na tela do atendente:
 * **Bypass de WebRTC no Server-Side AI**: Quando uma ligação é efetuada ou atendida utilizando a IA no servidor (`isServerAI = true`), o widget pula a solicitação de microfone local e a criação de conexões WebRTC no navegador, aliviando o uso de processamento local.
-* **Transcrições Unificadas em Tempo Real**: Conecta ao fluxo SSE (`/api/events`) e exibe as falas da IA e do cliente de forma aglutinada e limpa na caixa `#wacalls-transcript`. Os blocos de áudio transmitidos em frações consecutivas pelo mesmo orador são acumulados na mesma linha.
+* **Transcrições Unificadas em Tempo Real**: Conecta ao fluxo SSE (`/api/events`, autenticado por **ticket de uso único** com reconexão manual e backoff — a API key não aparece mais na URL nem no console) e exibe as falas da IA e do cliente de forma aglutinada e limpa na caixa `#wacalls-transcript`. Os blocos de áudio transmitidos em frações consecutivas pelo mesmo orador são acumulados na mesma linha.
 * **Resolução Dinâmica de Contatos**: Ao receber uma chamada de entrada, o widget busca o nome real do cliente e a foto do perfil via `/api/sessions/{sid}/contacts/{jid}` no backend em paralelo com a configuração da IA. A interface renderiza o pop-up de atendimento com o nome do cliente de forma reativa.
 * **Controle Inteligente de Ringtone**: O widget dispara o som de chamada recebida instantaneamente. Se a chamada for auto-atendida pela IA (`owner === "__server__"`), o som é interrompido e a tela transiciona de forma automática para "IA em chamada". Se outro operador atender a chamada, o som cessa e a tela flutuante é fechada automaticamente.
 * **Resolução de Script com Fallback**: Para contornar o problema de `document.currentScript` retornar `null` em ambientes de injeção dinâmica como o Chatwoot, o widget varre as tags `<script>` do DOM para identificar o elemento do `widget.js` e recuperar corretamente os atributos `BASE` (URL do servidor) e `KEY` (API Key).

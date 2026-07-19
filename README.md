@@ -215,6 +215,10 @@ npm run dev      # Vite na :5173, faz proxy de /api → http://localhost:8080
 | `WACALLS_PUBLIC_IP` | — | IP público p/ NAT 1:1 / ICE-TCP (`auto` detecta) |
 | `WACALLS_UDP_PORT` | — | Porta de mídia (UDP + ICE-TCP) |
 | `WACALLS_MAX_CALLS` | `8` | Equivalente a `-max-calls-per-session` por env |
+| `WACALLS_LOG_LEVEL` | — | `debug\|info\|warn\|error` (precede `-debug`) |
+| `WACALLS_CORS_ORIGINS` | `*` | Origens CORS permitidas (vírgula) — restrinja em produção |
+| `WACALLS_TRUSTED_PROXIES` | — | IPs/CIDRs de proxy confiável p/ honrar `X-Forwarded-For` |
+| `WACALLS_ALLOW_PRIVATE_URLS` | `false` | Permite destinos de IP privado em tool-proxy/mídia (SSRF) |
 
 ---
 
@@ -247,7 +251,17 @@ Notas de produção:
 
 Todas as rotas são escopadas por sessão. Os eventos chegam por um único canal SSE,
 marcados com o `sessionId` de origem. Se `WACALLS_API_KEY` estiver setada, envie
-`X-API-Key` (ou `?apiKey=` no SSE).
+`X-API-Key`. Para clientes que não conseguem enviar headers (EventSource/WebSocket
+do navegador), troque a key por um **ticket de uso único** em `POST /api/events/ticket`
+e conecte com `?ticket=` (o fluxo legado `?apiKey=` está deprecado).
+
+### Saúde e métricas *(novo)*
+
+| Método | Rota | Função |
+|---|---|---|
+| `GET` | `/healthz` | Liveness (sem auth) |
+| `GET` | `/ready` | Readiness — verifica o Postgres (sem auth) |
+| `GET` | `/api/metrics` | Telemetria: sessões, chamadas, agentes, goroutines, pool do banco |
 
 ### Sessões e chamadas
 
@@ -263,7 +277,8 @@ marcados com o `sessionId` de origem. Se `WACALLS_API_KEY` estiver setada, envie
 | `POST` | `/api/sessions/{sid}/calls/{id}/accept` | Atende uma chamada recebida |
 | `POST` | `/api/sessions/{sid}/calls/{id}/reject` | Rejeita uma chamada recebida |
 | `DELETE` | `/api/sessions/{sid}/calls/{id}` | Encerra a chamada ativa |
-| `GET` | `/api/sessions/{sid}/history` | Histórico recente (até 50 registros) |
+| `GET` | `/api/sessions/{sid}/history` | Histórico (persistido em Postgres) |
+| `POST` | `/api/events/ticket` | Emite ticket de uso único (30s) p/ SSE/WebSocket |
 | `GET` | `/api/events` | Server-sent events (sessões, auth, chamadas) |
 
 ### Mensagens, webhooks e Chatwoot *(novo no AstraCalls)*
@@ -271,18 +286,26 @@ marcados com o `sessionId` de origem. Se `WACALLS_API_KEY` estiver setada, envie
 | Método | Rota | Função |
 |---|---|---|
 | `POST` | `/api/sessions/{sid}/messages/text` | Envia texto |
-| `POST` | `/api/sessions/{sid}/messages/{image\|audio\|video\|document}` | Envia mídia (base64 ou URL) |
-| `GET/POST/DELETE` | `/api/sessions/{sid}/webhook` | Configura webhook de eventos da sessão |
+| `POST` | `/api/sessions/{sid}/messages/{image\|audio\|video\|document}` | Envia mídia (base64 ou URL — URLs passam pelo guarda anti-SSRF) |
+| `GET/POST/DELETE` | `/api/sessions/{sid}/webhook` | Configura webhook de eventos da sessão (com retry) |
 | `GET/POST/DELETE` | `/api/sessions/{sid}/chatwoot` | Configura a integração Chatwoot |
-| `POST` | `/api/sessions/{sid}/chatwoot/webhook` | Recebe eventos do Chatwoot (outgoing → WhatsApp) |
+| `POST` | `/api/sessions/{sid}/chatwoot/webhook` | Recebe eventos do Chatwoot — **exige `?token=`** (segredo por sessão, gerado automaticamente e exibido na UI) |
 | `GET` | `/api/chatwoot/resolve` | Resolve sessão/contato para o widget (`?account_id=&conversation_id=`) |
+
+### Proxy do Gemini *(novo)*
+
+| Método | Rota | Função |
+|---|---|---|
+| `GET` | `/api/sessions/{sid}/gemini/ws` | Proxy WebSocket do Gemini Live (a key fica no servidor) |
+| `POST` | `/api/sessions/{sid}/gemini/generateContent` | Proxy REST do generateContent (resumo pós-chamada) |
 
 ---
 
 ## 🧪 Testes
 
 ```bash
-go test ./...                 # pilha de mídia: SRTP, STUN, RTP, relay-ack, codec, estado
+go test ./...                 # pilha de mídia + segurança (auth, tickets, SSRF), IA, Chatwoot, estado
+go test -race ./...           # validação dos listeners/callbacks sob concorrência
 cd client && npm run build    # type-check + build de produção do cliente
 ```
 
@@ -291,7 +314,16 @@ cd client && npm run build    # type-check + build de produção do cliente
 ## 🔒 Segurança
 
 - Em produção, **sempre** defina `WACALLS_API_KEY` — sem ela qualquer um com acesso HTTP
-  pode criar contas, fazer chamadas e ler histórico.
+  pode criar contas, fazer chamadas e ler histórico (o servidor loga um warning alto no boot).
+- O **webhook do Chatwoot exige token** (`?token=` ou header `X-Chatwoot-Token`), gerado por
+  sessão e exibido na UI ao configurar a integração. Atualize a URL do webhook no Chatwoot
+  para incluir o token após o upgrade.
+- O **SSE e o proxy do Gemini usam tickets de uso único** (`POST /api/events/ticket`) —
+  evite o fluxo legado `?apiKey=` na URL (deprecado: vaza em logs de proxy e histórico).
+- **SSRF bloqueado por padrão**: tool-proxy e mídia por URL só alcançam IPs públicos
+  (use `WACALLS_ALLOW_PRIVATE_URLS=true` apenas se as integrações rodam na sua LAN).
+- Restrinja o CORS com `WACALLS_CORS_ORIGINS` e configure `WACALLS_TRUSTED_PROXIES`
+  para o rate limit honrar `X-Forwarded-For` com segurança.
 - O banco de cada sessão guarda **credenciais do WhatsApp**. Mantenha o Postgres protegido
   e fora da internet.
 - Exponha sempre por **HTTPS** (o `getUserMedia` exige contexto seguro).

@@ -21,6 +21,7 @@ const geminiLiveModel = "models/gemini-3.1-flash-live-preview"
 type TranscriptLine struct {
 	Speaker string `json:"speaker"` // "ai" ou "client"
 	Text    string `json:"text"`
+	At      int64  `json:"at,omitempty"` // unix ms do início da fala
 }
 
 // GeminiLiveClient gerencia a conexão WebSocket bidirecional com a API Gemini Live.
@@ -67,6 +68,10 @@ func (g *GeminiLiveClient) Connect(
 	return g.connectAndSetup()
 }
 
+// setupHandshakeTimeout é o tempo máximo aguardando o setupComplete do Gemini
+// Live. Sem isso, uma rede presa após o Dial travava a goroutine para sempre.
+const setupHandshakeTimeout = 15 * time.Second
+
 // connectAndSetup abre a conexão websocket e faz o setup inicial.
 func (g *GeminiLiveClient) connectAndSetup() error {
 	url := fmt.Sprintf("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=%s", g.config.GeminiAPIKey)
@@ -88,7 +93,7 @@ func (g *GeminiLiveClient) connectAndSetup() error {
 		return fmt.Errorf("gemini live setup: %w", err)
 	}
 
-	// Aguarda setupComplete
+	// Aguarda setupComplete (com timeout — rede presa não pode travar o agente)
 	setupDone := make(chan error, 1)
 	go func() {
 		for {
@@ -114,7 +119,16 @@ func (g *GeminiLiveClient) connectAndSetup() error {
 		}
 	}()
 
-	return <-setupDone
+	select {
+	case err := <-setupDone:
+		if err != nil {
+			_ = conn.Close()
+		}
+		return err
+	case <-time.After(setupHandshakeTimeout):
+		_ = conn.Close()
+		return fmt.Errorf("gemini live setup: timeout de %v aguardando setupComplete", setupHandshakeTimeout)
+	}
 }
 
 // buildSetup constrói o payload de setup com voice, tools e system instruction.
@@ -542,7 +556,7 @@ func (g *GeminiLiveClient) appendTranscript(speaker, text string) {
 			return
 		}
 	}
-	g.transcript = append(g.transcript, TranscriptLine{Speaker: speaker, Text: text})
+	g.transcript = append(g.transcript, TranscriptLine{Speaker: speaker, Text: text, At: time.Now().UnixMilli()})
 }
 
 // base64ToFloat32PCM decodifica base64 → int16 LE → float32.

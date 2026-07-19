@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { ScheduleCard, getStatus, type ScheduleStatus } from "./ScheduleCard";
 import { getAIConfig, setAIConfig } from "@/services/ai";
 import type { AIConfig, ScheduledCall } from "@/types/ai";
+import { parseScheduledCalls } from "@/lib/ai/scheduled-calls";
 
 const columns: { id: ScheduleStatus; label: string; icon: typeof Clock }[] = [
   { id: "pending", label: "Pendente", icon: Clock },
@@ -30,11 +31,7 @@ export const SchedulesTab = ({ sid }: { sid: string }) => {
       .then((r) => {
         if (r.aiConfig) {
           setConfig(r.aiConfig);
-          try {
-            setSchedules(JSON.parse(r.aiConfig.scheduledCalls || "[]"));
-          } catch {
-            setSchedules([]);
-          }
+          setSchedules(parseScheduledCalls(r.aiConfig.scheduledCalls));
         }
       })
       .catch(() => toast.error("Falha ao carregar agendamentos"))

@@ -64,6 +64,18 @@ func (r *callRegistry) setBridge(callID string, b *Bridge, oc media.Codec) (*Bri
 	return oldB, oldOC, true
 }
 
+// getBridge lê a ponte WebRTC/codec da chamada sob lock (evita corrida com
+// setBridge/removeCall, que escrevem esses campos).
+func (r *callRegistry) getBridge(callID string) (*Bridge, media.Codec, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ac, ok := r.calls[callID]
+	if !ok {
+		return nil, nil, false
+	}
+	return ac.bridge, ac.browserOpus, true
+}
+
 func (r *callRegistry) drain() []*activeCall {
 	r.mu.Lock()
 	defer r.mu.Unlock()

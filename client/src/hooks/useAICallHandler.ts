@@ -5,7 +5,8 @@ import { useDevices } from "@/stores/devices";
 import { getAIConfig } from "@/services/ai";
 import { useAIAgents } from "@/stores/ai";
 import { toast } from "sonner";
-import { GeminiLiveAgent } from "@/lib/gemini-live";
+// Import dinâmico: o módulo do Gemini (~40KB) não entra no bundle inicial
+// (CallCard também usa import() — manter o mesmo padrão nos dois).
 
 export const useAICallHandler = () => {
   const incoming = useCalls((s) => s.incoming);
@@ -16,9 +17,12 @@ export const useAICallHandler = () => {
 
   // Evita re-atender a mesma chamada recebida consecutivamente
   const handledIncomingRef = useRef<string | null>(null);
-  
+
   // Evita inicialização duplicada de agentes devido a múltiplas execuções concorrentes do useEffect
   const startingAgentsRef = useRef<Set<string>>(new Set());
+
+  // Timer do auto-atendimento com delay (cancelável se a chamada mudar de estado)
+  const autoAnswerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 1. Monitora chamadas recebidas (Incoming) para Atendimento Automático
   useEffect(() => {
@@ -34,8 +38,9 @@ export const useAICallHandler = () => {
         if (enabled && aiConfig && aiConfig.serverSideAI) return;
         if (enabled && aiConfig && aiConfig.autoAnswer) {
           const delay = aiConfig.autoAnswerDelay ? aiConfig.autoAnswerDelay * 1000 : 0;
-          
+
           const answerFn = () => {
+            autoAnswerTimerRef.current = null;
             // Verifica se a chamada ainda está tocando/pendente e se o operador não atendeu
             const currentIncoming = useCalls.getState().incoming;
             if (currentIncoming && currentIncoming.callId === incoming.callId) {
@@ -48,7 +53,8 @@ export const useAICallHandler = () => {
           };
 
           if (delay > 0) {
-            setTimeout(answerFn, delay);
+            if (autoAnswerTimerRef.current) clearTimeout(autoAnswerTimerRef.current);
+            autoAnswerTimerRef.current = setTimeout(answerFn, delay);
           } else {
             toast.info(`Chamada recebida de ${incoming.peer}. Atendendo automaticamente com IA...`);
             answerFn();
@@ -61,6 +67,14 @@ export const useAICallHandler = () => {
 
     void checkAndAutoAnswer();
   }, [incoming, acceptCallMutation]);
+
+  // Cancela o timer de auto-atendimento se a chamada sair do estado "incoming"
+  useEffect(() => {
+    if (!incoming && autoAnswerTimerRef.current) {
+      clearTimeout(autoAnswerTimerRef.current);
+      autoAnswerTimerRef.current = null;
+    }
+  }, [incoming]);
 
   // 2. Monitora chamadas conectadas para acoplar a IA de Voz (Atendimento ou Agendadas)
   useEffect(() => {
@@ -103,6 +117,7 @@ export const useAICallHandler = () => {
                   useAIAgents.getState().removeScheduledInProgress(call.callId);
                 }
 
+                const { GeminiLiveAgent } = await import("@/lib/gemini-live");
                 const agent = new GeminiLiveAgent(
                   call.callId,
                   conn.pc,

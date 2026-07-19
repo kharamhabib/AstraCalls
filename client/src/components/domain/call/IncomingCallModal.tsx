@@ -9,6 +9,7 @@ import { useRejectCall } from "@/hooks/useRejectCall";
 import { useContactInfo } from "@/hooks/useContactInfo";
 import { getAIConfig } from "@/services/ai";
 import { useAIAgents } from "@/stores/ai";
+import { useNow } from "@/lib/use-now";
 import type { AIConfig } from "@/types/ai";
 
 type RingHandle = { stop: () => void };
@@ -23,6 +24,7 @@ const startRingLoop = (): RingHandle | null => {
     return null;
   }
   let cancelled = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const playToneAt = (when: number, durationSec: number, freq: number, gainVal = 0.18) => {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -41,12 +43,13 @@ const startRingLoop = (): RingHandle | null => {
     if (cancelled) return;
     playToneAt(0, 1.0, 440);
     playToneAt(0, 1.0, 480);
-    setTimeout(scheduleCycle, 3000);
+    timer = setTimeout(scheduleCycle, 3000);
   };
   scheduleCycle();
   return {
     stop: () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
       void ctx.close().catch(() => {});
     },
   };
@@ -68,7 +71,7 @@ export const IncomingCallModal = () => {
   const busy = accept.isPending || reject.isPending;
 
   const [aiConfig, setAiConfig] = useState<AIConfig | null>(null);
-  const [, force] = useState(0);
+  useNow(); // relógio compartilhado para o countdown do auto-atendimento
 
   const { data: contact } = useContactInfo(incoming?.sessionId, incoming?.peer);
 
@@ -81,10 +84,7 @@ export const IncomingCallModal = () => {
   useEffect(() => {
     if (!incoming) {
       setAiConfig(null);
-      return;
     }
-    const t = setInterval(() => force((n) => n + 1), 1000);
-    return () => clearInterval(t);
   }, [incoming]);
 
   useEffect(() => {
@@ -176,7 +176,7 @@ export const IncomingCallModal = () => {
               className="h-14 w-14 rounded-full shadow-lg hover:scale-105 transition-transform duration-200"
               disabled={busy}
               onClick={() => incoming && reject.mutate({ sid: incoming.sessionId, callId: incoming.callId })}
-              aria-label="Reject"
+              aria-label="Recusar chamada"
             >
               <PhoneOff className="h-6 w-6" />
             </Button>
@@ -185,7 +185,7 @@ export const IncomingCallModal = () => {
               className="h-14 w-14 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg hover:scale-105 transition-transform duration-200"
               disabled={busy}
               onClick={() => incoming && accept.mutate({ sid: incoming.sessionId, callId: incoming.callId })}
-              aria-label="Accept"
+              aria-label="Atender chamada"
             >
               <Phone className="h-6 w-6" />
             </Button>

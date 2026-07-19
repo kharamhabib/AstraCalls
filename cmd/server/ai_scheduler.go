@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"wacalls/internal/voip/call"
-	"wacalls/internal/voip/core"
 
 	"go.mau.fi/whatsmeow/types"
 )
@@ -78,9 +77,25 @@ func (s *AIScheduler) Run(ctx context.Context) {
 	}
 }
 
-// Stop encerra o scheduler.
+// Stop encerra o scheduler e desacopla todos os agentes ativos (shutdown).
 func (s *AIScheduler) Stop() {
-	close(s.stop)
+	select {
+	case <-s.stop:
+	default:
+		close(s.stop)
+	}
+	s.mu.Lock()
+	agents := make([]*ServerAIAgent, 0, len(s.agents))
+	for _, a := range s.agents {
+		agents = append(agents, a)
+	}
+	s.agents = make(map[string]*ServerAIAgent)
+	s.callToSched = make(map[string]string)
+	s.triggeringIds = make(map[string]bool)
+	s.mu.Unlock()
+	for _, a := range agents {
+		a.Detach()
+	}
 }
 
 // tick verifica todas as sessões por agendamentos prontos para disparar.
@@ -171,10 +186,16 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 	config.ScheduledCalls = string(b)
 	sess.setAIConfig(config)
 	cfgJSON, _ := json.Marshal(config)
-	_ = sess.mgr.store.setAIConfig(ctx, sess.id, string(cfgJSON))
+	if err := sess.mgr.store.setAIConfig(ctx, sess.id, string(cfgJSON)); err != nil {
+		s.log.Error("[AIScheduler] Falha ao persistir agendamento (inativo)", "err", err, "session", sess.id)
+		if id != "" {
+			s.clearTriggering(id)
+		}
+		return
+	}
 
 	// Sessão WhatsApp precisa estar pareada
-	if sess.client.Store.ID == nil {
+	if sess.getClient().Store.ID == nil {
 		s.log.Warn("[AIScheduler] Sessão não pareada, ignorando agendamento", "session", sess.id)
 		if id != "" {
 			s.clearTriggering(id)
@@ -210,7 +231,9 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 	config.ScheduledCalls = string(b2)
 	sess.setAIConfig(config)
 	cfgJSON2, _ := json.Marshal(config)
-	_ = sess.mgr.store.setAIConfig(ctx, sess.id, string(cfgJSON2))
+	if err := sess.mgr.store.setAIConfig(ctx, sess.id, string(cfgJSON2)); err != nil {
+		s.log.Error("[AIScheduler] Falha ao persistir vínculo do agendamento", "err", err, "session", sess.id)
+	}
 
 	// Aplica prompt adicional se houver
 	agentConfig := config
@@ -223,32 +246,9 @@ func (s *AIScheduler) checkSession(ctx context.Context, sess *Session) {
 	if !ok {
 		return
 	}
-
-	// Guarda o OnStateChange original para interceptar o estado "connected"
-	originalOnState := ac.cm.OnStateChange
-	ac.cm.OnStateChange = func(info *call.CallInfo) {
-		// Propaga para o handler original (broker updates)
-		if originalOnState != nil {
-			originalOnState(info)
-		}
-		if info.IsEnded() {
-			return
-		}
-		if info.StateData.State == core.CallStateActive {
-			// Chamada conectada — acopla o agente de voz
-			go func() {
-				agent := NewServerAIAgent(sess, callID, phone, "outbound", ac.cm, agentConfig, s.log)
-				if err := agent.Start(ctx); err != nil {
-					s.log.Error("[AIScheduler] Erro ao iniciar agente", "err", err, "callId", callID)
-					return
-				}
-				s.mu.Lock()
-				s.agents[callID] = agent
-				s.mu.Unlock()
-				s.log.Info("[AIScheduler] Agente IA acoplado à chamada agendada", "callId", callID)
-			}()
-		}
-	}
+	sess.attachServerAI(ac.cm, callID, "outbound", agentConfig, func(info *call.CallInfo) string {
+		return phone
+	})
 }
 
 // CleanupAgent remove um agente ao encerrar a chamada.

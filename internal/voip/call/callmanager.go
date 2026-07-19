@@ -50,16 +50,70 @@ type CallManager struct {
 	lastCaptureAt time.Time
 	keepaliveStop chan struct{}
 
-	OnStateChange func(*CallInfo)
-	OnIncoming    func(*CallInfo)
-	OnEnded       func(*CallInfo)
-	OnPeerAudio   func([]float32)
+	// Callbacks protegidos por cbMu. Listeners de estado são uma lista (sem
+	// wrapping): cada interessado (broker, agente IA) registra o seu com
+	// AddStateListener, eliminando as corridas de "ler → embrulhar → reatribuir".
+	cbMu           sync.RWMutex
+	stateListeners []func(*CallInfo)
+	onIncoming     func(*CallInfo)
+	onEnded        func(*CallInfo)
+	onPeerAudio    func([]float32)
 
 	recvMu        sync.Mutex
 	lastRtpSeq    uint16
 	rtpHistory    [64]uint16
 	rtpHistoryIdx int
 	hasRtpHistory bool
+}
+
+// AddStateListener registra um listener de mudança de estado. Seguro para
+// chamadas concorrentes; os listeners são invocados fora de qualquer lock.
+func (m *CallManager) AddStateListener(fn func(*CallInfo)) {
+	if fn == nil {
+		return
+	}
+	m.cbMu.Lock()
+	m.stateListeners = append(m.stateListeners, fn)
+	m.cbMu.Unlock()
+}
+
+// SetOnIncoming define o handler de chamada recebida (1 por chamada).
+func (m *CallManager) SetOnIncoming(fn func(*CallInfo)) {
+	m.cbMu.Lock()
+	m.onIncoming = fn
+	m.cbMu.Unlock()
+}
+
+// SetOnEnded define o handler de encerramento (1 por chamada).
+func (m *CallManager) SetOnEnded(fn func(*CallInfo)) {
+	m.cbMu.Lock()
+	m.onEnded = fn
+	m.cbMu.Unlock()
+}
+
+// SetOnPeerAudio define o handler de áudio do peer (1 por chamada).
+func (m *CallManager) SetOnPeerAudio(fn func([]float32)) {
+	m.cbMu.Lock()
+	m.onPeerAudio = fn
+	m.cbMu.Unlock()
+}
+
+func (m *CallManager) incomingHandler() func(*CallInfo) {
+	m.cbMu.RLock()
+	defer m.cbMu.RUnlock()
+	return m.onIncoming
+}
+
+func (m *CallManager) endedHandler() func(*CallInfo) {
+	m.cbMu.RLock()
+	defer m.cbMu.RUnlock()
+	return m.onEnded
+}
+
+func (m *CallManager) peerAudioHandler() func([]float32) {
+	m.cbMu.RLock()
+	defer m.cbMu.RUnlock()
+	return m.onPeerAudio
 }
 
 func (m *CallManager) isDuplicateRtp(seq uint16) bool {
@@ -103,9 +157,23 @@ func (m *CallManager) CurrentCall() *CallInfo {
 	return m.currentCall
 }
 
+// emitState notifica os listeners de estado. Adquire os locks internamente e
+// invoca os handlers SEM segurar m.mu nem cbMu — listeners podem chamar
+// métodos do próprio CallManager sem risco de deadlock. Nunca chamar com
+// m.mu segurado.
 func (m *CallManager) emitState() {
-	if m.OnStateChange != nil && m.currentCall != nil {
-		m.OnStateChange(m.currentCall)
+	m.mu.Lock()
+	info := m.currentCall
+	m.mu.Unlock()
+	if info == nil {
+		return
+	}
+	m.cbMu.RLock()
+	listeners := make([]func(*CallInfo), len(m.stateListeners))
+	copy(listeners, m.stateListeners)
+	m.cbMu.RUnlock()
+	for _, fn := range listeners {
+		fn(info)
 	}
 }
 
@@ -149,8 +217,8 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 
 	m.mu.Lock()
 	_ = m.currentCall.ApplyTransition(Transition{Type: TransitionOfferSent})
-	m.emitState()
 	m.mu.Unlock()
+	m.emitState()
 
 	// Envia o offer e trata o ack em background: o aparelho toca quando recebe o
 	// offer, não quando o Query retorna. Antes travava até 15s no timeout do Query.
@@ -182,13 +250,13 @@ func (m *CallManager) AcceptCall(ctx context.Context, callID string) error {
 		return &CallError{"call cannot be accepted in state " + string(call.StateData.State)}
 	}
 	_ = call.ApplyTransition(Transition{Type: TransitionLocalAccepted})
-	m.emitState()
 	key := call.EncryptionKey
 	peer := wanode.MustJID(call.PeerJid)
 	creator := wanode.MustJID(call.CallCreator)
 	isVideo := call.MediaType == core.CallMediaTypeVideo
 	relayData := call.RelayData
 	m.mu.Unlock()
+	m.emitState()
 
 	if key != nil {
 		acceptNode, err := signaling.BuildAcceptStanza(ctx, m.sock, callID, key, peer, creator, isVideo)
@@ -263,8 +331,8 @@ func (m *CallManager) RejectCall(ctx context.Context, callID string, reason core
 	}
 	_ = call.ApplyTransition(Transition{Type: TransitionLocalRejected, Reason: reason})
 	node := signaling.BuildRejectStanza(wanode.MustJID(call.PeerJid), call.CallID, wanode.MustJID(call.CallCreator))
-	m.emitState()
 	m.mu.Unlock()
+	m.emitState()
 
 	go func() { _, _ = m.sock.Query(context.Background(), node) }()
 	m.cleanupMedia()
@@ -294,8 +362,8 @@ func (m *CallManager) EndCall(ctx context.Context, reason core.EndCallReason) er
 	}
 
 	ended := call
-	m.emitState()
 	m.mu.Unlock()
+	m.emitState()
 
 	go func() {
 		for _, node := range nodes {
@@ -311,8 +379,8 @@ func (m *CallManager) EndCall(ctx context.Context, reason core.EndCallReason) er
 		}
 	}()
 
-	if m.OnEnded != nil {
-		m.OnEnded(ended)
+	if fn := m.endedHandler(); fn != nil {
+		fn(ended)
 	}
 	m.cleanupMedia()
 	return nil

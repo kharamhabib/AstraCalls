@@ -3,13 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -35,6 +39,9 @@ type ChatwootConfig struct {
 	AccountToken    string `json:"account_token"`
 	InboxID         int    `json:"inbox_id"`
 	InboxIdentifier string `json:"inbox_identifier"`
+	// WebhookSecret autentica as chamadas POST .../chatwoot/webhook feitas pelo
+	// Chatwoot (header X-Chatwoot-Token ou ?token=). Gerado automaticamente.
+	WebhookSecret   string `json:"webhook_secret,omitempty"`
 }
 
 func (c ChatwootConfig) valid() bool {
@@ -82,14 +89,14 @@ func (s *Session) realPhone(jid types.JID) string {
 	if jid.Server == types.DefaultUserServer {
 		return jid.User
 	}
-	if pn, err := s.client.Store.LIDs.GetPNForLID(context.Background(), jid); err == nil && pn.User != "" {
+	if pn, err := s.getClient().Store.LIDs.GetPNForLID(context.Background(), jid); err == nil && pn.User != "" {
 		return pn.User
 	}
 	// Força busca no servidor do WhatsApp para resolver LID -> PN
-	if s.client != nil {
+	if s.getClient() != nil {
 		s.log.Info("realPhone: LID not in local DB, querying WhatsApp server", "lid", jid.String())
-		if resp, err := s.client.GetUserInfo(context.Background(), []types.JID{jid}); err == nil && resp != nil {
-			if pn2, err := s.client.Store.LIDs.GetPNForLID(context.Background(), jid); err == nil && pn2.User != "" {
+		if resp, err := s.getClient().GetUserInfo(context.Background(), []types.JID{jid}); err == nil && resp != nil {
+			if pn2, err := s.getClient().Store.LIDs.GetPNForLID(context.Background(), jid); err == nil && pn2.User != "" {
 				s.log.Info("realPhone: LID resolved from WhatsApp server", "lid", jid.String(), "pn", pn2.User)
 				return pn2.User
 			}
@@ -136,7 +143,7 @@ func (s *Session) chatwootPushIncoming(evt *events.Message) {
 	}
 
 	avatar := ""
-	if pp, perr := s.client.GetProfilePictureInfo(context.Background(), evt.Info.Chat, nil); perr == nil && pp != nil {
+	if pp, perr := s.getClient().GetProfilePictureInfo(context.Background(), evt.Info.Chat, nil); perr == nil && pp != nil {
 		avatar = pp.URL
 	}
 	contactID, sourceID, err := cfg.ensureContact(chatID, phone, name, avatar)
@@ -153,7 +160,7 @@ func (s *Session) chatwootPushIncoming(evt *events.Message) {
 	text := messageText(evt.Message)
 	// mídia recebida: baixa do WhatsApp e sobe pro Chatwoot como anexo
 	if dl := downloadableOf(evt.Message); dl != nil {
-		data, derr := s.client.Download(context.Background(), dl)
+		data, derr := s.getClient().Download(context.Background(), dl)
 		if derr == nil && len(data) > 0 {
 			fname, mime := mediaMeta(evt.Message)
 			if uerr := cfg.postAttachment(convID, text, fname, mime, data); uerr != nil {
@@ -177,7 +184,7 @@ var avatarSynced sync.Map
 // ensureContact acha (por telefone) ou cria o contato e garante o source_id da inbox.
 func (c ChatwootConfig) ensureContact(chatID, phone, name, avatarURL string) (contactID int, sourceID string, err error) {
 	// procura por telefone
-	if res, code, e := c.req(http.MethodGet, "/contacts/search?q="+phone, nil); e == nil && code == 200 {
+	if res, code, e := c.req(http.MethodGet, "/contacts/search?q="+url.QueryEscape(phone), nil); e == nil && code == 200 {
 		for _, it := range asList(res["payload"]) {
 			m := asMap(it)
 			if id := asInt(m["id"]); id != 0 {
@@ -318,9 +325,36 @@ func (c ChatwootConfig) postAttachment(convID int, content, filename, mime strin
 
 // ---------- Chatwoot -> WhatsApp (saída via webhook) ----------
 
+// checkWebhookToken valida o token do webhook do Chatwoot (header
+// X-Chatwoot-Token ou ?token=) em tempo constante.
+func (c ChatwootConfig) checkWebhookToken(r *http.Request) bool {
+	if c.WebhookSecret == "" {
+		return false
+	}
+	got := r.Header.Get("X-Chatwoot-Token")
+	if got == "" {
+		got = r.URL.Query().Get("token")
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(c.WebhookSecret)) == 1
+}
+
 func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessionByID(w, r.PathValue("sid"))
 	if sess == nil {
+		return
+	}
+	cfg := sess.getChatwoot()
+	if !cfg.valid() {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "chatwoot não configurado nesta sessão"})
+		return
+	}
+	// Garante segredo para configurações antigas (geradas antes desta versão)
+	if cfg.WebhookSecret == "" {
+		cfg = s.ensureWebhookSecret(r.Context(), sess)
+	}
+	if !cfg.checkWebhookToken(r) {
+		s.log.Warn("chatwoot webhook: token inválido ou ausente", "session", sess.id, "ip", getClientIP(r))
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid webhook token"})
 		return
 	}
 	var body map[string]any
@@ -355,7 +389,7 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// texto (só envia separado se não houver exatamente 1 anexo, igual ao WAHA)
 	if strings.TrimSpace(content) != "" && len(attachments) != 1 {
-		_, _ = sess.client.SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(content)})
+		_, _ = sess.getClient().SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(content)})
 	}
 	// anexos
 	for _, it := range attachments {
@@ -377,18 +411,18 @@ func (s *server) handleChatwootWebhook(w http.ResponseWriter, r *http.Request) {
 
 // sendChatwootFile baixa o anexo do Chatwoot e envia pelo WhatsApp.
 func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType, url, caption string) error {
-	data, err := fetchMedia("", url)
+	data, err := fetchChatwootAttachment(url)
 	if err != nil {
 		return err
 	}
 	filename := url[strings.LastIndex(url, "/")+1:]
 	switch fileType {
 	case "image":
-		up, e := s.client.Upload(ctx, data, whatsmeow.MediaImage)
+		up, e := s.getClient().Upload(ctx, data, whatsmeow.MediaImage)
 		if e != nil {
 			return e
 		}
-		_, e = s.client.SendMessage(ctx, jid, &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+		_, e = s.getClient().SendMessage(ctx, jid, &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
 			Caption: proto.String(caption), Mimetype: proto.String("image/jpeg"),
 			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
@@ -399,7 +433,7 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 		if terr != nil {
 			ogg = data // fallback: envia o original
 		}
-		up, e := s.client.Upload(ctx, ogg, whatsmeow.MediaAudio)
+		up, e := s.getClient().Upload(ctx, ogg, whatsmeow.MediaAudio)
 		if e != nil {
 			return e
 		}
@@ -412,25 +446,25 @@ func (s *Session) sendChatwootFile(ctx context.Context, jid types.JID, fileType,
 			am.Seconds = proto.Uint32(seconds)
 			am.Waveform = waveform
 		}
-		_, e = s.client.SendMessage(ctx, jid, &waE2E.Message{AudioMessage: am})
+		_, e = s.getClient().SendMessage(ctx, jid, &waE2E.Message{AudioMessage: am})
 		return e
 	case "video":
-		up, e := s.client.Upload(ctx, data, whatsmeow.MediaVideo)
+		up, e := s.getClient().Upload(ctx, data, whatsmeow.MediaVideo)
 		if e != nil {
 			return e
 		}
-		_, e = s.client.SendMessage(ctx, jid, &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+		_, e = s.getClient().SendMessage(ctx, jid, &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
 			Caption: proto.String(caption), Mimetype: proto.String("video/mp4"),
 			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 		}})
 		return e
 	default:
-		up, e := s.client.Upload(ctx, data, whatsmeow.MediaDocument)
+		up, e := s.getClient().Upload(ctx, data, whatsmeow.MediaDocument)
 		if e != nil {
 			return e
 		}
-		_, e = s.client.SendMessage(ctx, jid, &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+		_, e = s.getClient().SendMessage(ctx, jid, &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
 			FileName: proto.String(filename), Title: proto.String(filename),
 			Mimetype: proto.String("application/octet-stream"),
 			URL:      &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
@@ -614,6 +648,31 @@ func digitsOnly(s string) string {
 
 // ---------- handlers de config ----------
 
+// newWebhookSecret gera um segredo aleatório para o webhook do Chatwoot.
+func newWebhookSecret() string {
+	b := make([]byte, 20)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// ensureWebhookSecret garante que a config tenha um segredo de webhook,
+// gerando e persistindo um novo quando necessário (migração de configs antigas).
+func (s *server) ensureWebhookSecret(ctx context.Context, sess *Session) ChatwootConfig {
+	cfg := sess.getChatwoot()
+	if !cfg.valid() || cfg.WebhookSecret != "" {
+		return cfg
+	}
+	cfg.WebhookSecret = newWebhookSecret()
+	sess.setChatwoot(cfg)
+	if b, err := json.Marshal(cfg); err == nil {
+		if err := sess.mgr.store.setChatwoot(ctx, sess.id, string(b)); err != nil {
+			s.log.Error("falha ao persistir segredo do webhook chatwoot", "session", sess.id, "err", err)
+		}
+	}
+	s.log.Info("chatwoot: segredo de webhook gerado (atualize a URL do webhook no Chatwoot)", "session", sess.id)
+	return cfg
+}
+
 func (s *server) handleSetChatwoot(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessionByID(w, r.PathValue("sid"))
 	if sess == nil {
@@ -624,9 +683,17 @@ func (s *server) handleSetChatwoot(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}
+	existing := sess.getChatwoot()
 	// se o token vier vazio (edição), mantém o atual
 	if cfg.AccountToken == "" {
-		cfg.AccountToken = sess.getChatwoot().AccountToken
+		cfg.AccountToken = existing.AccountToken
+	}
+	// preserva o segredo do webhook (ou gera um novo na primeira configuração)
+	if cfg.WebhookSecret == "" {
+		cfg.WebhookSecret = existing.WebhookSecret
+	}
+	if cfg.WebhookSecret == "" {
+		cfg.WebhookSecret = newWebhookSecret()
 	}
 	if !cfg.valid() {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "url, account_id, account_token e inbox_id são obrigatórios"})
@@ -634,7 +701,11 @@ func (s *server) handleSetChatwoot(w http.ResponseWriter, r *http.Request) {
 	}
 	sess.setChatwoot(cfg)
 	b, _ := json.Marshal(cfg)
-	_ = sess.mgr.store.setChatwoot(r.Context(), sess.id, string(b))
+	if err := sess.mgr.store.setChatwoot(r.Context(), sess.id, string(b)); err != nil {
+		s.log.Error("falha ao persistir config chatwoot", "session", sess.id, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "falha ao salvar configuração no banco"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"chatwoot": cfg})
 }
 
@@ -643,9 +714,9 @@ func (s *server) handleGetChatwoot(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
-	cfg := sess.getChatwoot()
-	cfg.AccountToken = "" // não devolve o token
-	writeJSON(w, http.StatusOK, map[string]any{"chatwoot": cfg, "enabled": sess.getChatwoot().valid()})
+	cfg := s.ensureWebhookSecret(r.Context(), sess)
+	cfg.AccountToken = "" // não devolve o token da conta
+	writeJSON(w, http.StatusOK, map[string]any{"chatwoot": cfg, "enabled": cfg.valid()})
 }
 
 func (s *server) handleDeleteChatwoot(w http.ResponseWriter, r *http.Request) {
@@ -654,7 +725,11 @@ func (s *server) handleDeleteChatwoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess.setChatwoot(ChatwootConfig{})
-	_ = sess.mgr.store.setChatwoot(r.Context(), sess.id, "")
+	if err := sess.mgr.store.setChatwoot(r.Context(), sess.id, ""); err != nil {
+		s.log.Error("falha ao remover config chatwoot", "session", sess.id, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "falha ao remover configuração no banco"})
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -792,19 +867,12 @@ func (s *Session) fetchChatwootContext(phone string) string {
 	}
 
 	// Carrega o fuso horário configurado
-	tzEnv := os.Getenv("TZ")
-	if tzEnv == "" {
-		tzEnv = "America/Sao_Paulo"
-	}
-	loc, err := time.LoadLocation(tzEnv)
-	if err != nil {
-		loc = time.UTC
-	}
+	loc := configuredLocation()
 
 	var contactID int
 	var contactName string
 	var contactMap map[string]any
-	res, code, err := cfg.req(http.MethodGet, "/contacts/search?q="+phone, nil)
+	res, code, err := cfg.req(http.MethodGet, "/contacts/search?q="+url.QueryEscape(phone), nil)
 	if err != nil || code != 200 {
 		s.log.Warn("chatwoot fetch context: contact search failed", "phone", phone, "code", code, "err", err)
 		return ""

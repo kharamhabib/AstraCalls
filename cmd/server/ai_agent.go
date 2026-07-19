@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +22,13 @@ import (
 
 const serverOwnerID = "__server__"
 const maxAudioQueueSamples = 800000 // ~50 segundos a 16kHz
+
+// toolWebhookClient executa webhooks de tools customizadas (timeout fixo).
+var toolWebhookClient = &http.Client{Timeout: 10 * time.Second}
+
+// geminiRestClient chama a API REST do Gemini (resumo pós-chamada) com timeout —
+// antes era http.Post sem timeout, que podia pendurar a goroutine para sempre.
+var geminiRestClient = &http.Client{Timeout: 60 * time.Second}
 
 // ServerAIAgent orquestra a ponte de áudio entre o WhatsApp e o Gemini Live no servidor.
 type ServerAIAgent struct {
@@ -118,7 +124,7 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 	}
 
 	// 4. Se o peer for só números, tenta como PN JID
-	if cleanPeer := cleanDigitsOnly(peer); cleanPeer != "" {
+	if cleanPeer := digitsOnly(peer); cleanPeer != "" {
 		if jid, err := types.ParseJID(cleanPeer + "@" + types.DefaultUserServer); err == nil {
 			jidsToTry = append(jidsToTry, jid)
 		}
@@ -126,7 +132,7 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 
 	contactName := "Cliente"
 	for _, jid := range jidsToTry {
-		if contact, err := sess.client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
+		if contact, err := sess.getClient().Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
 			if contact.FullName != "" {
 				contactName = contact.FullName
 				break
@@ -145,14 +151,7 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 	}
 
 	// Processa tags dinâmicas no prompt (mesmo comportamento do frontend)
-	now := time.Now()
-	tzEnv := os.Getenv("TZ")
-	if tzEnv == "" {
-		tzEnv = "America/Sao_Paulo"
-	}
-	if loc, err := time.LoadLocation(tzEnv); err == nil {
-		now = now.In(loc)
-	}
+	now := time.Now().In(configuredLocation())
 
 	localTime := now.Format("02/01/2006 15:04")
 	_, offset := now.Zone()
@@ -217,7 +216,7 @@ func (a *ServerAIAgent) Start(ctx context.Context) error {
 			if speaker == "ai" {
 				prefix = "📝 IA disse:"
 			}
-			a.log.Info(fmt.Sprintf("[ServerAI] %s %s", prefix, text))
+			a.log.Info("[ServerAI] transcrição", "origem", prefix, "texto", text)
 
 			a.sess.mgr.broker.broadcast(map[string]any{
 				"type":      "ai-transcript",
@@ -254,7 +253,7 @@ func (a *ServerAIAgent) Start(ctx context.Context) error {
 
 	// Acopla o callback de áudio do peer (WhatsApp → Gemini) com fila e contador para monitorar se estamos ouvindo o cliente
 	var peerPackets uint64
-	a.cm.OnPeerAudio = func(pcm16 []float32) {
+	a.cm.SetOnPeerAudio(func(pcm16 []float32) {
 		a.mu.Lock()
 		detached := a.detached
 		a.mu.Unlock()
@@ -275,7 +274,7 @@ func (a *ServerAIAgent) Start(ctx context.Context) error {
 			a.log.Warn("[ServerAIAgent] Inbound queue truncada (excedeu cap)")
 		}
 		a.inboundMu.Unlock()
-	}
+	})
 
 	// Emite evento SSE para que o frontend saiba que o servidor gerencia esta chamada
 	a.sess.mgr.broker.broadcast(map[string]any{
@@ -408,7 +407,7 @@ func (a *ServerAIAgent) Detach() {
 	}
 
 	// Limpa callback de áudio
-	a.cm.OnPeerAudio = nil
+	a.cm.SetOnPeerAudio(nil)
 
 	a.gemini.Close()
 
@@ -422,39 +421,35 @@ func (a *ServerAIAgent) handleToolCall(ctx context.Context, name string, args ma
 	case "hangup":
 		a.log.Info("[ServerAIAgent] Tool hangup disparada")
 		// Aguarda ativamente o fim do áudio na fila antes de desligar
-		go func() {
+		goSafe(a.log, func() {
 			a.waitForAudioFinish(context.Background())
 			a.Detach()
 			a.sess.terminateCall(a.callID, core.EndCallReasonUserEnded)
 			a.sess.removeCall(a.callID)
 			a.sess.mgr.broker.endCall(a.callID, string(core.EndCallReasonUserEnded))
-		}()
+		})
 		return map[string]any{"status": "chamada sendo encerrada"}
 
 	case "open_ticket":
 		a.log.Info("[ServerAIAgent] Tool open_ticket disparada", "args", args)
 		reason, _ := args["reason"].(string)
 
-		// Sinaliza no broker que a chamada teve um chamado aberto
-		if rec, ok := a.sess.mgr.broker.getCall(a.callID); ok {
-			rec.TicketOpened = true
-			rec.TicketReason = reason
-			a.sess.mgr.broker.upsertCall(*rec)
-		}
+		// Sinaliza no broker que a chamada teve um chamado aberto (atômico + persistido)
+		a.sess.mgr.broker.openTicket(a.callID, reason)
 
 		// Envia a notificação do chamado pelo WhatsApp para o admin se configurado
 		config := a.sess.getAIConfig()
 		if config.PostCall.SendAdmin && config.PostCall.AdminNumber != "" {
-			go func() {
+			goSafe(a.log, func() {
 				adminJid, err := resolveRecipient(config.PostCall.AdminNumber)
 				if err == nil {
 					contactName := a.resolveContactPhone(context.Background())
 					msg := fmt.Sprintf("⚠️ *Novo Chamado Aberto pela IA*\n\n• *Cliente:* %s\n• *Sessão:* %s\n• *Motivo:* %s\n• *ID Chamada:* %s", contactName, a.sess.name, reason, a.callID)
-					_, _ = a.sess.client.SendMessage(context.Background(), adminJid, &waE2E.Message{
+					_, _ = a.sess.getClient().SendMessage(context.Background(), adminJid, &waE2E.Message{
 						Conversation: proto.String(msg),
 					})
 				}
-			}()
+			})
 		}
 
 		return map[string]any{"status": "chamado aberto com sucesso"}
@@ -494,7 +489,7 @@ func (a *ServerAIAgent) toolSendMessage(ctx context.Context, args map[string]any
 		return map[string]any{"error": err.Error()}
 	}
 
-	_, err = a.sess.client.SendMessage(ctx, jid, &waE2E.Message{
+	_, err = a.sess.getClient().SendMessage(ctx, jid, &waE2E.Message{
 		Conversation: proto.String(message),
 	})
 	if err != nil {
@@ -523,7 +518,7 @@ func (a *ServerAIAgent) resolveContactPhone(ctx context.Context) string {
 
 	jid, err := types.ParseJID(raw)
 	if err != nil {
-		return cleanDigitsOnly(raw)
+		return digitsOnly(raw)
 	}
 
 	if jid.Server == "lid" {
@@ -532,16 +527,6 @@ func (a *ServerAIAgent) resolveContactPhone(ctx context.Context) string {
 		}
 	}
 	return jid.User
-}
-
-func cleanDigitsOnly(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // toolScheduleCall agenda uma ligação futura.
@@ -580,7 +565,10 @@ func (a *ServerAIAgent) toolScheduleCall(ctx context.Context, args map[string]an
 	config.ScheduledCalls = string(b)
 	a.sess.setAIConfig(config)
 	cfgJSON, _ := json.Marshal(config)
-	_ = a.sess.mgr.store.setAIConfig(ctx, a.sess.id, string(cfgJSON))
+	if err := a.sess.mgr.store.setAIConfig(ctx, a.sess.id, string(cfgJSON)); err != nil {
+		a.log.Error("[ServerAIAgent] Falha ao persistir agendamento", "err", err)
+		return map[string]any{"error": "falha ao salvar o agendamento no banco"}
+	}
 
 	if a.sess.mgr.Scheduler != nil {
 		a.sess.mgr.Scheduler.RecalculateActiveCount()
@@ -602,6 +590,11 @@ func (a *ServerAIAgent) toolCustomWebhook(ctx context.Context, name string, args
 	if tool == nil {
 		return map[string]any{"error": fmt.Sprintf("ferramenta %s não encontrada", name)}
 	}
+	// Webhooks de tools customizadas são configurados pelo operador — apenas o
+	// esquema é validado (URLs de LAN são legítimas aqui).
+	if _, err := parseHTTPURL(tool.WebhookURL); err != nil {
+		return map[string]any{"error": "webhookUrl inválida: " + err.Error()}
+	}
 
 	jsonBytes, _ := json.Marshal(args)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tool.WebhookURL, bytes.NewBuffer(jsonBytes))
@@ -610,8 +603,7 @@ func (a *ServerAIAgent) toolCustomWebhook(ctx context.Context, name string, args
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := toolWebhookClient.Do(req)
 	if err != nil {
 		return map[string]any{"error": err.Error()}
 	}
@@ -634,14 +626,14 @@ func (a *ServerAIAgent) executePostCallActions() {
 
 	// Salva a transcrição no banco de dados principal
 	if a.sess.mgr != nil && a.sess.mgr.store != nil {
-		go func() {
+		goSafe(a.log, func() {
 			err := a.sess.mgr.store.saveTranscript(context.Background(), a.sess.id, a.callID, transcript)
 			if err != nil {
 				a.log.Error("[ServerAIAgent] Erro ao salvar transcrição no banco", "err", err)
 			} else {
 				a.log.Info("[ServerAIAgent] Transcrição salva no banco com sucesso")
 			}
-		}()
+		})
 	}
 
 	config := a.gemini.config
@@ -662,18 +654,18 @@ func (a *ServerAIAgent) executePostCallActions() {
 
 	// Busca info do contato
 	contactInfo := a.peer
-	if a.sess.client != nil {
+	if a.sess.getClient() != nil {
 		jid, err := types.ParseJID(a.peer)
 		if err == nil {
 			phone := jid.User
-			if jid.Server == "lid" && a.sess.client.Store.LIDs != nil {
-				if pn, e := a.sess.client.Store.LIDs.GetPNForLID(context.Background(), jid); e == nil && !pn.IsEmpty() {
+			if jid.Server == "lid" && a.sess.getClient().Store.LIDs != nil {
+				if pn, e := a.sess.getClient().Store.LIDs.GetPNForLID(context.Background(), jid); e == nil && !pn.IsEmpty() {
 					phone = pn.User
 					jid = pn
 				}
 			}
 			name := ""
-			if contact, e := a.sess.client.Store.Contacts.GetContact(context.Background(), jid); e == nil && contact.Found {
+			if contact, e := a.sess.getClient().Store.Contacts.GetContact(context.Background(), jid); e == nil && contact.Found {
 				if contact.FullName != "" {
 					name = contact.FullName
 				} else if contact.PushName != "" {
@@ -688,15 +680,12 @@ func (a *ServerAIAgent) executePostCallActions() {
 		}
 	}
 
-	tzEnv := os.Getenv("TZ")
-	if tzEnv == "" {
-		tzEnv = "America/Sao_Paulo"
+	now := time.Now().In(configuredLocation())
+	// Horário real de início da chamada (histórico do broker); fallback: agora.
+	startTime := now
+	if hCall, ok := a.sess.mgr.broker.findHistoryCall(a.callID); ok && hCall.StartedAt > 0 {
+		startTime = time.UnixMilli(hCall.StartedAt).In(configuredLocation())
 	}
-	now := time.Now()
-	if loc, err := time.LoadLocation(tzEnv); err == nil {
-		now = now.In(loc)
-	}
-	startTime := now.Add(-5 * time.Minute) // estimativa
 	formattedDate := startTime.Format("02/01/2006 15:04")
 	dir := "Recebida"
 	if a.direction != "inbound" {
@@ -728,7 +717,7 @@ Transcrição:
 	}
 	jsonBody, _ := json.Marshal(body)
 
-	resp, err := http.Post(geminiURL, "application/json", bytes.NewBuffer(jsonBody))
+	resp, err := geminiRestClient.Post(geminiURL, "application/json", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		a.log.Error("[ServerAIAgent] Erro ao gerar resumo", "err", err)
 		return
@@ -758,7 +747,7 @@ Transcrição:
 	if config.PostCall.SendAdmin && config.PostCall.AdminNumber != "" {
 		adminJID, err := resolveRecipient(config.PostCall.AdminNumber)
 		if err == nil {
-			_, _ = a.sess.client.SendMessage(ctx, adminJID, &waE2E.Message{
+			_, _ = a.sess.getClient().SendMessage(ctx, adminJID, &waE2E.Message{
 				Conversation: proto.String(summary),
 			})
 			a.log.Info("[ServerAIAgent] Resumo enviado para admin")
@@ -770,12 +759,12 @@ Transcrição:
 		clientJID, err := types.ParseJID(a.peer)
 		if err == nil {
 			// Se for LID, tenta buscar o número de telefone (PN) real para envio correto do WhatsApp
-			if clientJID.Server == "lid" && a.sess.client.Store.LIDs != nil {
-				if pn, e := a.sess.client.Store.LIDs.GetPNForLID(ctx, clientJID); e == nil && !pn.IsEmpty() {
+			if clientJID.Server == "lid" && a.sess.getClient().Store.LIDs != nil {
+				if pn, e := a.sess.getClient().Store.LIDs.GetPNForLID(ctx, clientJID); e == nil && !pn.IsEmpty() {
 					clientJID = pn
 				}
 			}
-			_, _ = a.sess.client.SendMessage(ctx, clientJID, &waE2E.Message{
+			_, _ = a.sess.getClient().SendMessage(ctx, clientJID, &waE2E.Message{
 				Conversation: proto.String(summary),
 			})
 			a.log.Info("[ServerAIAgent] Resumo enviado para cliente", "to", clientJID.String())
@@ -814,10 +803,22 @@ Transcrição:
 			"endedAt":      endedAtVal,
 			"transcript":   transcript,
 		})
-		go func() {
-			c := &http.Client{Timeout: 10 * time.Second}
-			_, _ = c.Post(config.PostCall.WebhookURL, "application/json", bytes.NewBuffer(webhookBody))
-		}()
+		webhookURL := config.PostCall.WebhookURL
+		goSafe(a.log, func() {
+			resp, err := doWithRetry(webhookClient, func() (*http.Request, error) {
+				req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(webhookBody))
+				if err != nil {
+					return nil, err
+				}
+				req.Header.Set("Content-Type", "application/json")
+				return req, nil
+			}, 3, a.log, "post-call-webhook")
+			if err != nil {
+				a.log.Error("[ServerAIAgent] Webhook pós-chamada falhou após retries", "err", err)
+				return
+			}
+			_ = resp.Body.Close()
+		})
 	}
 }
 

@@ -1,18 +1,20 @@
 import { useState, useRef, useEffect } from "react";
-import { Loader2, Power, QrCode, Edit2, Check, X } from "lucide-react";
+import { Loader2, Power, QrCode, Edit2, Check, X, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HistoryDrawer } from "@/components/domain/history/HistoryDrawer";
 import { logoutSession, pairSession, renameSession } from "@/services/sessions";
+import { eventStream, type StreamStatus } from "@/lib/event-stream";
 import type { SessionInfo, SessionState } from "@/types/session";
 
 const statusLabel: Record<SessionState, string> = {
-  open: "Connected",
-  qr: "Scan QR",
-  connecting: "Connecting…",
-  logged_out: "Disconnected",
+  open: "Conectado",
+  qr: "Escaneie o QR",
+  connecting: "Conectando…",
+  logged_out: "Desconectado",
 };
 
 const statusVariant: Record<SessionState, "success" | "secondary" | "muted" | "destructive"> = {
@@ -20,6 +22,31 @@ const statusVariant: Record<SessionState, "success" | "secondary" | "muted" | "d
   qr: "secondary",
   connecting: "muted",
   logged_out: "destructive",
+};
+
+const streamStatusMeta: Record<StreamStatus, { label: string; className: string }> = {
+  connected: { label: "Eventos em tempo real conectados", className: "text-emerald-500" },
+  reconnecting: { label: "Reconectando aos eventos… chamadas podem atrasar", className: "text-amber-500 animate-pulse" },
+  disconnected: { label: "Desconectado dos eventos em tempo real", className: "text-destructive" },
+};
+
+// StreamStatusBadge mostra a saúde do canal SSE — antes uma queda silenciosa
+// fazia o operador parar de receber chamadas sem perceber.
+const StreamStatusBadge = () => {
+  const [status, setStatus] = useState<StreamStatus>(eventStream.status);
+  useEffect(() => eventStream.onStatus(setStatus), []);
+  const meta = streamStatusMeta[status];
+  const Icon = status === "connected" ? Wifi : WifiOff;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={`inline-flex items-center ${meta.className}`} role="status" aria-label={meta.label}>
+          <Icon className="h-4 w-4" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{meta.label}</TooltipContent>
+    </Tooltip>
+  );
 };
 
 export const SessionHeader = ({ session }: { session: SessionInfo }) => {
@@ -124,18 +151,19 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
           </div>
         )}
         <Badge variant={statusVariant[session.state]}>{statusLabel[session.state]}</Badge>
+        <StreamStatusBadge />
       </div>
       <div className="flex items-center gap-2">
         {session.paired && <HistoryDrawer sid={session.id} />}
         {session.paired ? (
           <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => logoutSession(session.id))}>
             {busy ? <Loader2 key="loader" className="h-4 w-4 animate-spin" /> : <Power key="power" className="h-4 w-4" />}
-            <span>Disconnect</span>
+            <span>Desconectar</span>
           </Button>
         ) : (
           <Button size="sm" disabled={busy} onClick={() => run(() => pairSession(session.id))}>
             {busy ? <Loader2 key="loader" className="h-4 w-4 animate-spin" /> : <QrCode key="qrcode" className="h-4 w-4" />}
-            <span>Reactivate</span>
+            <span>Reativar</span>
           </Button>
         )}
       </div>

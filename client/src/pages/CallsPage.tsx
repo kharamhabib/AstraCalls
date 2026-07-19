@@ -9,32 +9,20 @@ import { SettingsTab } from "@/components/domain/settings/SettingsTab";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { isMine, useCalls } from "@/stores/calls";
 import { getAIConfig } from "@/services/ai";
-import type { ScheduledCall } from "@/types/ai";
+import { parseScheduledCalls } from "@/lib/ai/scheduled-calls";
 
 export const CallsPage = ({ sid }: { sid: string }) => {
   const calls = useCalls((s) => s.calls);
-  const [, force] = useState(0);
   const [activeTab, setActiveTab] = useState<TabId>("dialer");
   const [pendingCount, setPendingCount] = useState(0);
-
-  useEffect(() => {
-    const t = setInterval(() => force((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
 
   // Fetch schedule badge count
   useEffect(() => {
     getAIConfig(sid)
       .then((r) => {
-        if (r.aiConfig?.scheduledCalls) {
-          try {
-            const schedules: ScheduledCall[] = JSON.parse(r.aiConfig.scheduledCalls);
-            const pending = schedules.filter((s) => s.active && new Date(s.time) > new Date());
-            setPendingCount(pending.length);
-          } catch {
-            setPendingCount(0);
-          }
-        }
+        const schedules = parseScheduledCalls(r.aiConfig?.scheduledCalls);
+        const pending = schedules.filter((s) => s.active && new Date(s.time) > new Date());
+        setPendingCount(pending.length);
       })
       .catch(() => {});
   }, [sid, activeTab]);
@@ -60,8 +48,8 @@ export const CallsPage = ({ sid }: { sid: string }) => {
             ) : (
               <EmptyState
                 icon={<PhoneCall className="h-6 w-6" />}
-                title="No active calls"
-                description="Dial a number above to start a call."
+                title="Nenhuma chamada ativa"
+                description="Disque um número acima para iniciar uma chamada."
               />
             )}
             <OtherCallsList calls={others} />

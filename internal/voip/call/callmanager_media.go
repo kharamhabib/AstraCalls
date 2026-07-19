@@ -247,7 +247,7 @@ func (m *CallManager) onRelayData(data []byte) {
 	}
 
 	pcm = media.NormalizeFrame(pcm, codec.FrameSize())
-	if m.OnPeerAudio != nil {
-		m.OnPeerAudio(pcm)
+	if fn := m.peerAudioHandler(); fn != nil {
+		fn(pcm)
 	}
 }

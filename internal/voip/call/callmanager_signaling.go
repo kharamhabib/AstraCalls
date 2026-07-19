@@ -120,12 +120,10 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node, 
 		m.log.Error("send preaccept", "err", err)
 	}
 
-	if m.OnIncoming != nil {
-		m.OnIncoming(call)
+	if fn := m.incomingHandler(); fn != nil {
+		fn(call)
 	}
-	m.mu.Lock()
 	m.emitState()
-	m.mu.Unlock()
 	m.log.Info("incoming call", "call_id", callID, "peer", peerJid.String(), "video", isVideo, "relays", len(parsed.Relays))
 }
 
@@ -152,7 +150,6 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 
 	m.mu.Lock()
 	_ = call.ApplyTransition(Transition{Type: TransitionRemoteAccepted})
-	m.emitState()
 	m.acceptedByJid = peerJid.String()
 
 	var reinitialized bool
@@ -177,6 +174,7 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	hasConn := m.relay.HasConnection()
 	relayData := call.RelayData
 	m.mu.Unlock()
+	m.emitState()
 
 	m.log.Info("remote accepted call", "call_id", call.CallID, "peer", peerJid.String(),
 		"relay_connected", hasConn, "relay_endpoints", relayEndpointCount(relayData))
@@ -233,22 +231,31 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 
 	if hasConn {
 		m.mu.Lock()
+		activated := false
+		hasCodec := m.codec != nil
 		if call.StateData.State == core.CallStateRinging {
 			_ = call.ApplyTransition(Transition{Type: TransitionRemoteAccepted})
 		}
 		if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err == nil {
-			m.emitState()
 			m.startSilenceKeepaliveLocked()
-			m.log.Info("call ACTIVE (media path established)", "call_id", call.CallID, "audio", m.codec != nil)
+			activated = true
 		}
 		m.mu.Unlock()
+		if activated {
+			m.emitState()
+			m.log.Info("call ACTIVE (media path established)", "call_id", call.CallID, "audio", hasCodec)
+		}
 	} else if relayData != nil {
 		m.mu.Lock()
+		accepted := false
 		if err := call.ApplyTransition(Transition{Type: TransitionRemoteAccepted}); err == nil {
+			accepted = true
+		}
+		m.mu.Unlock()
+		if accepted {
 			m.emitState()
 			m.log.Info("call accepted by peer", "call_id", call.CallID)
 		}
-		m.mu.Unlock()
 		m.connectRelays(relayData.Endpoints)
 	}
 }
@@ -361,11 +368,11 @@ func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
 	m.log.Info("call terminated by peer", "call_id", call.CallID, "reason", string(reason))
 	_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: reason})
 	ended := call
-	m.emitState()
 	m.mu.Unlock()
+	m.emitState()
 
-	if m.OnEnded != nil {
-		m.OnEnded(ended)
+	if fn := m.endedHandler(); fn != nil {
+		fn(ended)
 	}
 	m.cleanupMedia()
 }

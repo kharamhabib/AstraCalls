@@ -52,6 +52,15 @@ type subscriber struct {
 	ch       chan []byte
 }
 
+// HistoryPersister persiste o histórico de chamadas fora da memória (Postgres).
+// Chamado pelo broker após cada mutação relevante; implementações devem ser
+// tolerantes a falhas (logar e seguir — a memória continua autoritativa em runtime).
+type HistoryPersister interface {
+	SaveCall(rec CallRecord)
+	SaveSummary(sessionID, callID, summary string)
+	SaveTicket(sessionID, callID, reason string)
+}
+
 type Broker struct {
 	mu      sync.RWMutex
 	subs    map[*subscriber]struct{}
@@ -59,6 +68,7 @@ type Broker struct {
 	history []CallRecord
 
 	SnapshotFn func() []any
+	History    HistoryPersister
 }
 
 func NewBroker() *Broker {
@@ -185,10 +195,35 @@ func (b *Broker) endCall(id, reason string) {
 	sessionID := c.SessionID
 	b.mu.Unlock()
 
+	if b.History != nil {
+		b.History.SaveCall(ended)
+	}
+
 	b.broadcast(map[string]any{
 		"type": "call-ended", "sessionId": sessionID, "id": id, "owner": owner, "reason": reason, "endedAt": now,
 	})
 	b.broadcastCallList()
+}
+
+// updateCall aplica fn ao registro ativo de forma atômica (sob lock) e
+// retransmite a lista. Substitui o padrão getCall → muta → upsertCall, que
+// perdia atualizações concorrentes (lost update).
+func (b *Broker) updateCall(id string, fn func(*CallRecord)) bool {
+	b.mu.Lock()
+	c, ok := b.calls[id]
+	if !ok {
+		b.mu.Unlock()
+		return false
+	}
+	fn(c)
+	rec := *c
+	b.mu.Unlock()
+	b.broadcastCallList()
+	b.broadcast(map[string]any{
+		"type": "call-status", "sessionId": rec.SessionID, "id": rec.CallID, "owner": rec.Owner,
+		"status": rec.Status, "peer": rec.Peer, "startedAt": rec.StartedAt,
+	})
+	return true
 }
 
 func (b *Broker) broadcastCallList() {
@@ -225,7 +260,6 @@ func (b *Broker) historyRows(sessionID string, limit int) []CallRecord {
 
 func (b *Broker) saveSummary(sessionID, callID, summary string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	for i := range b.history {
 		if b.history[i].SessionID == sessionID && b.history[i].CallID == callID {
 			b.history[i].Summary = summary
@@ -234,6 +268,21 @@ func (b *Broker) saveSummary(sessionID, callID, summary string) {
 	}
 	if c, ok := b.calls[callID]; ok && c.SessionID == sessionID {
 		c.Summary = summary
+	}
+	b.mu.Unlock()
+	if b.History != nil {
+		b.History.SaveSummary(sessionID, callID, summary)
+	}
+}
+
+// loadHistory hidrata o histórico em memória a partir da persistência
+// (chamado no boot, antes de aceitar tráfego). Registros mais recentes por último.
+func (b *Broker) loadHistory(recs []CallRecord) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.history = append(b.history, recs...)
+	if len(b.history) > maxHistorySize {
+		b.history = b.history[len(b.history)-maxHistorySize:]
 	}
 }
 
@@ -246,6 +295,40 @@ func (b *Broker) findHistoryCall(id string) (CallRecord, bool) {
 		}
 	}
 	return CallRecord{}, false
+}
+
+// openTicket marca uma chamada (ativa ou no histórico) como chamado aberto,
+// de forma atômica, e persiste. Retorna o registro encontrado (para notificações).
+func (b *Broker) openTicket(callID, reason string) (CallRecord, bool) {
+	b.mu.Lock()
+	var out CallRecord
+	found := false
+	if c, ok := b.calls[callID]; ok {
+		c.TicketOpened = true
+		c.TicketReason = reason
+		out = *c
+		found = true
+	}
+	for i := len(b.history) - 1; i >= 0; i-- {
+		if b.history[i].CallID == callID {
+			b.history[i].TicketOpened = true
+			b.history[i].TicketReason = reason
+			if !found {
+				out = b.history[i]
+				found = true
+			}
+			break
+		}
+	}
+	sessionID := out.SessionID
+	b.mu.Unlock()
+	if found {
+		if b.History != nil {
+			b.History.SaveTicket(sessionID, callID, reason)
+		}
+		b.broadcastCallList()
+	}
+	return out, found
 }
 
 func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID string) {

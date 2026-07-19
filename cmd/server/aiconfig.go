@@ -78,7 +78,11 @@ func (s *server) handleSetAIConfig(w http.ResponseWriter, r *http.Request) {
 
 	sess.setAIConfig(cfg)
 	b, _ := json.Marshal(cfg)
-	_ = sess.mgr.store.setAIConfig(r.Context(), sess.id, string(b))
+	if err := sess.mgr.store.setAIConfig(r.Context(), sess.id, string(b)); err != nil {
+		sess.log.Error("falha ao persistir ai-config", "session", sess.id, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "falha ao salvar configuração no banco"})
+		return
+	}
 
 	if sess.mgr.Scheduler != nil {
 		sess.mgr.Scheduler.RecalculateActiveCount()
@@ -105,6 +109,9 @@ func (s *server) handleGetAIConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"aiConfig": cfg,
 		"enabled":  hasKey,
+		// Indica ao cliente que a key pode ser usada via proxy do servidor
+		// (sem expor a key no navegador) — ver /api/sessions/{sid}/gemini/*.
+		"geminiProxy": true,
 	})
 }
 
@@ -115,6 +122,10 @@ func (s *server) handleDeleteAIConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess.setAIConfig(AIConfig{})
-	_ = sess.mgr.store.setAIConfig(r.Context(), sess.id, "")
+	if err := sess.mgr.store.setAIConfig(r.Context(), sess.id, ""); err != nil {
+		sess.log.Error("falha ao remover ai-config", "session", sess.id, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "falha ao remover configuração no banco"})
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

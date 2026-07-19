@@ -15,6 +15,13 @@ export const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
     setBusy(true);
     setErr("");
     const base = url.replace(/\/+$/, "");
+    // Aviso de credencial em texto claro (HTTP sem TLS fora de localhost)
+    const isInsecureHttp = base.startsWith("http://") && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(base);
+    if (isInsecureHttp) {
+      setErr("Atenção: HTTP sem criptografia — sua API key trafegará em texto claro. Prefira HTTPS.");
+      setBusy(false);
+      return;
+    }
     try {
       const r = await fetch(`${base}/api/config`, { headers: { "X-API-Key": key } });
       if (!r.ok) {

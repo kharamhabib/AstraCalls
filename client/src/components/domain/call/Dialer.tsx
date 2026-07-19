@@ -8,6 +8,7 @@ import { useStartCall } from "@/hooks/useStartCall";
 import { useDevices } from "@/stores/devices";
 import { useAIAgents } from "@/stores/ai";
 import { setAIConfig } from "@/services/ai";
+import { parseScheduledCalls } from "@/lib/ai/scheduled-calls";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/Switch";
 
@@ -41,6 +42,10 @@ export const Dialer = ({ sid }: { sid: string }) => {
       toast.error("Por favor, insira um número válido com DDD (ex: 11999999999).");
       return;
     }
+    if (cleanPhone.length > 15) {
+      toast.error("Número muito longo — use DDI + DDD + número (máx. 15 dígitos).");
+      return;
+    }
 
     if (isScheduled) {
       if (!scheduleTime) {
@@ -59,12 +64,7 @@ export const Dialer = ({ sid }: { sid: string }) => {
 
       setBusy(true);
       try {
-        let existingSchedules = [];
-        try {
-          existingSchedules = JSON.parse(activeConfig.scheduledCalls || "[]");
-        } catch {
-          existingSchedules = [];
-        }
+        const existingSchedules = parseScheduledCalls(activeConfig.scheduledCalls);
 
         const newCall = {
           id: Math.random().toString(36).substring(2, 11),

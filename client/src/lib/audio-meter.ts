@@ -1,5 +1,32 @@
-export const attachMeter = (stream: MediaStream, onDb: (db: number) => void): () => void => {
-  const ctx = new AudioContext();
+// AudioContext compartilhado: o Chrome limita ~6 contextos simultâneos por
+// origem — com um contexto por medidor (mic + peer + IA por chamada), poucas
+// chamadas ativas estouravam o limite e os medidores falhavam silenciosamente.
+let sharedCtx: AudioContext | null = null;
+let refCount = 0;
+
+const acquireContext = (): AudioContext => {
+  if (!sharedCtx || sharedCtx.state === "closed") {
+    sharedCtx = new AudioContext();
+    refCount = 0;
+  }
+  refCount += 1;
+  if (sharedCtx.state === "suspended") {
+    void sharedCtx.resume().catch(() => {});
+  }
+  return sharedCtx;
+};
+
+const releaseContext = (): void => {
+  refCount -= 1;
+  if (refCount <= 0 && sharedCtx) {
+    refCount = 0;
+    void sharedCtx.close().catch(() => {});
+    sharedCtx = null;
+  }
+};
+
+export const attachMeter = (stream: MediaStream, onDb: (db: number) => void): (() => void) => {
+  const ctx = acquireContext();
   const src = ctx.createMediaStreamSource(stream);
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 1024;
@@ -19,6 +46,10 @@ export const attachMeter = (stream: MediaStream, onDb: (db: number) => void): ()
   tick();
   return () => {
     stopped = true;
-    try { src.disconnect(); analyser.disconnect(); ctx.close(); } catch {}
+    try {
+      src.disconnect();
+      analyser.disconnect();
+    } catch {}
+    releaseContext();
   };
 };

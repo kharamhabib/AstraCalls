@@ -4,6 +4,11 @@
  *   <script src="https://SEU-WACALLS/widget.js" data-api-key="SUA_API_KEY"></script>
  * Injeta um ícone de telefone ao lado do botão de excluir ticket; ao clicar,
  * abre um painel flutuante e liga para o contato via WhatsApp (WebRTC).
+ *
+ * SEGURANÇA: a API key fica visível no HTML para qualquer agente logado no
+ * Chatwoot. Recomenda-se usar uma instalação com acesso restrito por domínio
+ * (WACALLS_CORS_ORIGINS) e HTTPS obrigatório. A conexão de eventos (SSE) usa
+ * tickets de uso único — a key nunca aparece na URL.
  */
 (function () {
   "use strict";
@@ -135,9 +140,20 @@
     if (p) return p;
     p = el("div");
     p.id = "wacalls-panel";
+    p.setAttribute("role", "dialog");
+    p.setAttribute("aria-label", "Chamada WhatsApp");
     document.body.appendChild(p);
     return p;
   }
+
+  // Esc fecha o painel somente fora de chamada ativa (nunca derruba uma ligação)
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    var p = document.getElementById("wacalls-panel");
+    if (!p) return;
+    if (call && call.answered) return;
+    closePanel();
+  });
 
   function render(state) {
     var p = panel();
@@ -152,18 +168,18 @@
         '<div class="cw-name">Caixa sem WhatsApp</div>' +
         '<div class="cw-sub" style="margin-top:6px;line-height:1.45">' + esc(state.warn) + "</div></div>";
     } else if (state.error) {
-      body = '<div class="cw-b"><div class="cw-sub" style="color:#e5484d">' + state.error + "</div></div>";
+      body = '<div class="cw-b"><div class="cw-sub" style="color:#e5484d">' + esc(state.error) + "</div></div>";
     } else if (state.inCall) {
       body =
         '<div class="cw-b"><div class="cw-name">' + esc(state.name) + "</div>" +
         '<div class="cw-sub">' + esc(state.phone) + "</div>" +
-        '<div class="cw-st" id="wacalls-st">' + (state.status || "") + "</div>" +
-        '<div id="wacalls-transcript" style="margin-top:12px; max-height:100px; overflow-y:auto; font-size:12px; text-align:left; border:1px solid #eceef0; border-radius:8px; padding:8px; background:#f8f9fa; color:#4f565b; display:none; flex-direction:column; gap:6px; font-family:inherit;"></div>' +
+        '<div class="cw-st" id="wacalls-st">' + esc(state.status || "") + "</div>" +
+        '<div id="wacalls-transcript" aria-live="polite" style="margin-top:12px; max-height:100px; overflow-y:auto; font-size:12px; text-align:left; border:1px solid #eceef0; border-radius:8px; padding:8px; background:#f8f9fa; color:#4f565b; display:none; flex-direction:column; gap:6px; font-family:inherit;"></div>' +
         '<div class="cw-row" style="margin-top:14px;">' +
         (state.isServerAI
           ? '<div style="display:inline-flex; align-items:center; justify-content:center; gap:6px; font-size:12px; font-weight:600; color:#d97706; background:#fef3c7; padding:6px 12px; border-radius:20px; border:1px solid #fde68a;">' + ICON_SPARKLES_SMALL + " IA no Servidor</div>"
-          : '<button class="cw-act cw-mute" id="wacalls-mute" title="Mudo">' + ICON_MIC + "</button>") +
-        '<button class="cw-act cw-hang" id="wacalls-hang" title="Encerrar">' + ICON_PHONE_OFF + "</button></div>" +
+          : '<button class="cw-act cw-mute" id="wacalls-mute" title="Mudo" aria-label="Mudo">' + ICON_MIC + "</button>") +
+        '<button class="cw-act cw-hang" id="wacalls-hang" title="Encerrar" aria-label="Encerrar chamada">' + ICON_PHONE_OFF + "</button></div>" +
         (state.isServerAI ? "" : '<audio id="wacalls-audio" autoplay playsinline style="display: block; width: 0; height: 0; opacity: 0; pointer-events: none;"></audio>') +
         "</div>";
     } else if (state.incoming) {
@@ -172,20 +188,20 @@
         '<div class="cw-sub">' + esc(state.phone) + "</div>" +
         '<div class="cw-st" id="wacalls-st">Tocando…</div>' +
         '<div class="cw-row" style="margin-top:18px;">' +
-        '<button class="cw-act cw-call" id="wacalls-answer" title="Atender">' + ICON_PHONE + "</button>" +
+        '<button class="cw-act cw-call" id="wacalls-answer" title="Atender" aria-label="Atender chamada">' + ICON_PHONE + "</button>" +
         (state.hasAI
-          ? '<button class="cw-act cw-ai-answer" id="wacalls-ai-answer" title="Atender com IA" style="background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 4px 12px rgba(217,119,6,.32);">' + ICON_SPARKLES + "</button>"
+          ? '<button class="cw-act cw-ai-answer" id="wacalls-ai-answer" title="Atender com IA" aria-label="Atender com IA" style="background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 4px 12px rgba(217,119,6,.32);">' + ICON_SPARKLES + "</button>"
           : "") +
-        '<button class="cw-act cw-hang" id="wacalls-reject" title="Recusar">' + ICON_PHONE_OFF + "</button></div>" +
+        '<button class="cw-act cw-hang" id="wacalls-reject" title="Recusar" aria-label="Recusar chamada">' + ICON_PHONE_OFF + "</button></div>" +
         '<audio id="wacalls-audio" autoplay playsinline style="display: block; width: 0; height: 0; opacity: 0; pointer-events: none;"></audio></div>';
     } else {
       body =
         '<div class="cw-b"><div class="cw-name">' + esc(state.name) + "</div>" +
         '<div class="cw-sub">' + esc(state.phone) + "</div>" +
         '<div class="cw-row" style="margin-top:18px;">' +
-        '<button class="cw-act cw-call" id="wacalls-start" title="Ligar">' + ICON_PHONE + "</button>" +
+        '<button class="cw-act cw-call" id="wacalls-start" title="Ligar" aria-label="Ligar">' + ICON_PHONE + "</button>" +
         (state.hasAI
-          ? '<button class="cw-act cw-ai-start" id="wacalls-ai-start" title="Ligar com IA" style="background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 4px 12px rgba(217,119,6,.32);">' + ICON_SPARKLES + "</button>"
+          ? '<button class="cw-act cw-ai-start" id="wacalls-ai-start" title="Ligar com IA" aria-label="Ligar com IA" style="background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 4px 12px rgba(217,119,6,.32);">' + ICON_SPARKLES + "</button>"
           : "") +
         "</div></div>";
     }
@@ -210,8 +226,8 @@
   }
 
   function esc(s) {
-    return (s || "").replace(/[&<>"]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    return (s || "").replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
 
@@ -262,12 +278,37 @@
   }
 
   function iceComplete(pc) {
-    return new Promise(function (res) {
+    // Timeout de 10s: sem ele a chamada ficava em "Conectando…" para sempre
+    // quando a coleta ICE travava. O listener é sempre removido.
+    return new Promise(function (res, rej) {
       if (pc.iceGatheringState === "complete") return res();
-      pc.addEventListener("icegatheringstatechange", function () {
-        if (pc.iceGatheringState === "complete") res();
-      });
+      var timer = setTimeout(function () {
+        cleanup();
+        rej(new Error("timeout na coleta ICE"));
+      }, 10000);
+      var onState = function () {
+        if (pc.iceGatheringState === "complete") {
+          cleanup();
+          res();
+        }
+      };
+      var cleanup = function () {
+        clearTimeout(timer);
+        pc.removeEventListener("icegatheringstatechange", onState);
+      };
+      pc.addEventListener("icegatheringstatechange", onState);
     });
+  }
+
+  // micErrorMessage traduz erros comuns de getUserMedia para orientar o agente
+  function micErrorMessage(e) {
+    if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) {
+      return "Permissão de microfone negada. Libere o microfone no ícone de cadeado do navegador e tente de novo.";
+    }
+    if (e && e.name === "NotFoundError") {
+      return "Nenhum microfone encontrado neste computador.";
+    }
+    return "Erro: " + ((e && e.message) || e);
   }
 
   async function startCall(state, isAI) {
@@ -353,31 +394,78 @@
       }
       connectEvents();
     } catch (e) {
-      setStatus("Erro: " + (e.message || e));
+      // Libera mic e PeerConnection em qualquer falha (o LED do microfone
+      // não pode ficar aceso numa chamada que nem começou)
+      if (pc) { try { pc.close(); } catch (_) {} }
+      if (mic) {
+        try {
+          mic.getTracks().forEach(function (t) { t.stop(); });
+        } catch (_) {}
+      }
+      setStatus(micErrorMessage(e));
     }
   }
 
+  // fetchEventTicket troca a API key (header) por um ticket de uso único (30s).
+  // A key NUNCA vai na URL (vazava em logs de proxy e no console).
+  function fetchEventTicket() {
+    return fetch(BASE + "/api/events/ticket", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Key": KEY },
+    }).then(function (r) {
+      if (!r.ok) throw new Error("ticket " + r.status);
+      return r.json();
+    }).then(function (d) {
+      return d.ticket;
+    });
+  }
+
+  var esRetry = 0;
+  var esTimer = null;
+
   function connectEvents() {
-    if (!BASE || globalES) return;
-    try {
-      var url = BASE + "/api/events" + (KEY ? "?apiKey=" + encodeURIComponent(KEY) : "");
-      console.log("[wacalls-widget] Conectando ao EventSource:", url);
-      globalES = new EventSource(url);
-      globalES.onopen = function () {
-        console.log("[wacalls-widget] EventSource conectado com sucesso");
-      };
-      globalES.onmessage = function (ev) {
-        var msg;
-        try { msg = JSON.parse(ev.data); } catch (e) { return; }
-        console.log("[wacalls-widget] Evento SSE recebido:", msg);
-        handleEvent(msg);
-      };
-      globalES.onerror = function (err) {
-        console.error("[wacalls-widget] Erro no EventSource:", err);
-      }; 
-    } catch (e) {
-      console.error("[wacalls-widget] Erro ao instanciar EventSource:", e);
-    }
+    if (!BASE || globalES || esTimer) return;
+    // Cada (re)conexão emite um ticket novo (o ticket é de uso único — o
+    // reconnect automático do EventSource com a mesma URL não funcionaria).
+    esTimer = setTimeout(function () {
+      esTimer = null;
+      openEvents();
+    }, esRetry === 0 ? 0 : Math.min(30000, 1000 * Math.pow(2, esRetry)));
+  }
+
+  function openEvents() {
+    fetchEventTicket()
+      .then(function (ticket) {
+        var url = BASE + "/api/events?ticket=" + encodeURIComponent(ticket);
+        try {
+          var es = new EventSource(url);
+          globalES = es;
+          es.onopen = function () {
+            esRetry = 0;
+            console.log("[wacalls-widget] EventSource conectado");
+          };
+          es.onmessage = function (ev) {
+            var msg;
+            try { msg = JSON.parse(ev.data); } catch (e) { return; }
+            handleEvent(msg);
+          };
+          es.onerror = function () {
+            try { es.close(); } catch (e) {}
+            if (globalES === es) globalES = null;
+            esRetry += 1;
+            connectEvents(); // agenda reconexão com backoff
+          };
+        } catch (e) {
+          console.error("[wacalls-widget] Erro ao instanciar EventSource:", e);
+          esRetry += 1;
+          connectEvents();
+        }
+      })
+      .catch(function (e) {
+        console.error("[wacalls-widget] Falha ao obter ticket SSE:", e);
+        esRetry += 1;
+        esTimer = setTimeout(openEvents, Math.min(30000, 1000 * Math.pow(2, esRetry)));
+      });
   }
 
   function handleEvent(msg) {
@@ -562,7 +650,14 @@
         markAnswered();
       }
     } catch (e) {
-      setStatus("Erro: " + (e.message || e));
+      // Libera mic/PeerConnection criados antes da falha
+      if (pc) { try { pc.close(); } catch (_) {} }
+      if (mic) {
+        try {
+          mic.getTracks().forEach(function (t) { t.stop(); });
+        } catch (_) {}
+      }
+      setStatus(micErrorMessage(e));
       try { await api("/api/sessions/" + inc.sessionId + "/calls/" + inc.callId, { method: "DELETE" }); } catch (_) {}
     }
   }
@@ -776,12 +871,22 @@
   }
 
   var obs = new MutationObserver(function () {
-    refreshBinding();
-    ensureButton();
+    // Debounce: o DOM do Chatwoot (SPA) muta constantemente — antes o handler
+    // rodava a cada mutação + um setInterval de 1s redundante.
+    scheduleBindingRefresh();
   });
   obs.observe(document.body, { childList: true, subtree: true });
-  // verifica troca de conversa também por timer (a URL muda sem alterar o DOM às vezes)
-  setInterval(refreshBinding, 1000);
+
+  var bindingTimer = null;
+  function scheduleBindingRefresh() {
+    if (bindingTimer) return;
+    bindingTimer = setTimeout(function () {
+      bindingTimer = null;
+      refreshBinding();
+      ensureButton();
+    }, 400);
+  }
+
   var tries = 0;
   (function retry() {
     refreshBinding();

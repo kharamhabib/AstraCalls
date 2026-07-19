@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -50,6 +51,17 @@ func main() {
 	if *debug {
 		level = slog.LevelDebug
 	}
+	// WACALLS_LOG_LEVEL (debug|info|warn|error) tem precedência sobre a flag.
+	switch strings.ToLower(envStr("WACALLS_LOG_LEVEL", "")) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
 
@@ -69,13 +81,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Hidrata o histórico de chamadas em memória a partir do Postgres
+	// (summaries e chamados sobrevivem a restarts).
+	srv.hydrateHistory(ctx)
+
 	// Recalcula o total de agendamentos ativos ao iniciar
 	srv.scheduler.RecalculateActiveCount()
 
 	// Inicia o scheduler de IA server-side em background
 	go srv.scheduler.Run(ctx)
 
-	httpSrv := &http.Server{Addr: *addr, Handler: srv.routes()}
+	httpSrv := &http.Server{
+		Addr:    *addr,
+		Handler: srv.routes(),
+		// Timeouts de leitura protegem contra Slowloris. WriteTimeout fica 0
+		// porque o SSE (/api/events) é uma resposta de longa duração.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		log.Info("HTTP server listening", "addr", *addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -85,6 +109,8 @@ func main() {
 
 	<-ctx.Done()
 	log.Info("shutting down")
+	// Para o scheduler e desacopla os agentes IA (fecha sessões Gemini Live).
+	srv.scheduler.Stop()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)

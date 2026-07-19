@@ -215,12 +215,12 @@ func (m *SessionManager) Delete(ctx context.Context, id string) error {
 	if !ok {
 		return fmt.Errorf("no session %s", id)
 	}
-	if s.client.Store.ID != nil {
-		if err := s.client.Logout(ctx); err != nil {
+	if s.getClient().Store.ID != nil {
+		if err := s.getClient().Logout(ctx); err != nil {
 			m.log.Warn("logout failed; deleting locally", "session", id, "err", err)
 		}
 	}
-	s.client.Disconnect()
+	s.getClient().Disconnect()
 	s.teardownAllCalls()
 	// o store da sessão é um banco inteiro só dela: fecha a conexão e derruba.
 	if s.waDB != nil {
@@ -241,8 +241,8 @@ func (m *SessionManager) Logout(ctx context.Context, id string) error {
 	if !ok {
 		return fmt.Errorf("no session %s", id)
 	}
-	if s.client.Store.ID != nil {
-		if err := s.client.Logout(ctx); err != nil {
+	if s.getClient().Store.ID != nil {
+		if err := s.getClient().Logout(ctx); err != nil {
 			m.log.Warn("logout failed", "session", id, "err", err)
 		}
 	}
@@ -260,7 +260,7 @@ func (m *SessionManager) Pair(id string) error {
 	if !ok {
 		return fmt.Errorf("no session %s", id)
 	}
-	if s.client.Store.ID != nil {
+	if s.getClient().Store.ID != nil {
 		return fmt.Errorf("session already paired")
 	}
 	cli := whatsmeow.NewClient(s.waContainer.NewDevice(), m.waLogger)

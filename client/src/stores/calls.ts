@@ -36,11 +36,17 @@ export const ensureCallsWired = (): void => {
       }));
     } else if (ev.type === "call-ended") {
       // Desacopla o agente de IA se houver um ativo para esta chamada
+      // (setAgentInstance em vez de mutar o Map — mutação in-place não dispara
+      // re-render nos componentes inscritos)
       const agent = useAIAgents.getState().activeAgents.get(ev.id);
       if (agent) {
         agent.detach().catch(console.error);
-        useAIAgents.getState().activeAgents.delete(ev.id);
+        useAIAgents.getState().setAgentInstance(ev.id, null);
       }
+      useAIAgents.getState().setAgentActive(ev.id, false);
+      useAIAgents.getState().removeScheduledInProgress(ev.id);
+      // Libera a transcrição acumulada da chamada (evita crescimento indefinido do store)
+      useAIAgents.getState().clearTranscript(ev.id);
       useCalls.setState((s) => {
         const conn = s.ownConnections.get(ev.id);
         if (conn) conn.close();

@@ -5,7 +5,7 @@ import { useDevices } from "@/stores/devices";
 import { getAIConfig, setAIConfig } from "@/services/ai";
 import { useAIAgents } from "@/stores/ai";
 import { useCalls } from "@/stores/calls";
-import type { ScheduledCall } from "@/types/ai";
+import { parseScheduledCalls } from "@/lib/ai/scheduled-calls";
 import { toast } from "sonner";
 
 export const useAICallScheduler = () => {
@@ -53,13 +53,7 @@ export const useAICallScheduler = () => {
         return;
       }
 
-      let schedules: ScheduledCall[] = [];
-      try {
-        schedules = JSON.parse(activeConfig.scheduledCalls || "[]");
-      } catch (e) {
-        console.error("[useAICallScheduler] Erro ao fazer parse de scheduledCalls JSON:", e);
-        return;
-      }
+      const schedules = parseScheduledCalls(activeConfig.scheduledCalls);
 
       const activeSchedules = schedules.filter((s) => s.active);
       if (activeSchedules.length === 0) return;
@@ -102,10 +96,7 @@ export const useAICallScheduler = () => {
             // Vincula o callId gerado ao agendamento inativado
             getAIConfig(activeId).then(({ enabled, aiConfig }) => {
               if (enabled && aiConfig) {
-                let currentSchedules: ScheduledCall[] = [];
-                try {
-                  currentSchedules = JSON.parse(aiConfig.scheduledCalls || "[]");
-                } catch {}
+                const currentSchedules = parseScheduledCalls(aiConfig.scheduledCalls);
                 const updated = currentSchedules.map((s) =>
                   s.id === toTrigger.id ? { ...s, callId } : s
                 );

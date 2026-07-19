@@ -1,8 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { PlusCircle } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
-import { Agentation } from "agentation";
 import { AppShell } from "@/components/layout/AppShell";
 import { CallsPage } from "@/pages/CallsPage";
 import { SessionPairing } from "@/components/domain/session/SessionPairing";
@@ -14,6 +13,20 @@ import { ensureCallsWired } from "@/stores/calls";
 import { useTheme } from "@/stores/theme";
 import { useAICallHandler } from "@/hooks/useAICallHandler";
 import { useAICallScheduler } from "@/hooks/useAICallScheduler";
+
+// Agentation é ferramenta de DEV: import dinâmico para não ir ao bundle de produção
+const DevAgentation = (): React.ReactElement | null => {
+  const [Comp, setComp] = useState<ComponentType | null>(null);
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      import("agentation")
+        .then((m) => setComp(() => m.Agentation))
+        .catch(() => {});
+    }
+  }, []);
+  if (!import.meta.env.DEV || !Comp) return null;
+  return <Comp />;
+};
 
 export const App = () => {
   const sessions = useSessions((s) => s.sessions);
@@ -37,8 +50,8 @@ export const App = () => {
         {sessions.length === 0 ? (
           <EmptyState
             icon={<PlusCircle className="h-6 w-6" />}
-            title="No accounts yet"
-            description="Create your first WhatsApp account from the sidebar to start calling."
+            title="Nenhuma conta ainda"
+            description="Crie sua primeira conta WhatsApp na barra lateral para começar a ligar."
           />
         ) : active ? (
           <div className="space-y-4">
@@ -46,12 +59,12 @@ export const App = () => {
             {active.paired ? <CallsPage sid={active.id} /> : <SessionPairing session={active} />}
           </div>
         ) : (
-          <EmptyState title="Select an account" description="Choose an account from the sidebar." />
+          <EmptyState title="Selecione uma conta" description="Escolha uma conta na barra lateral." />
         )}
       </AppShell>
       <IncomingCallModal />
       <Toaster theme={theme} position="top-right" richColors closeButton />
-      {import.meta.env.DEV && <Agentation />}
+      <DevAgentation />
     </TooltipProvider>
   );
 };

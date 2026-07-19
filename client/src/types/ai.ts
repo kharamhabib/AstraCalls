@@ -41,6 +41,7 @@ export type AIConfig = {
   customTools: CustomTool[];
   postCall: PostCallActions;
   customFields?: string;
+  chatwootEnabled?: boolean; // preenchido em runtime pelo agente (não vem do backend)
 };
 
 export type ScheduledCall = {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -14,8 +13,13 @@ import (
 
 var webhookClient = &http.Client{Timeout: 10 * time.Second}
 
+// webhookSem limita o número de entregas de webhook em voo (evita milhares de
+// goroutines/conexões simultâneas em bursts de mensagens do WhatsApp).
+var webhookSem = make(chan struct{}, 32)
+
 // dispatchWebhook envia um evento para a URL de webhook da sessão (se houver),
-// de forma assíncrona. Formato: {session, event, timestamp, data}.
+// de forma assíncrona, com retry (3 tentativas) e concorrência limitada.
+// Formato: {session, event, timestamp, data}.
 func (s *Session) dispatchWebhook(event string, data any) {
 	url := s.getWebhook()
 	if url == "" {
@@ -30,19 +34,28 @@ func (s *Session) dispatchWebhook(event string, data any) {
 	if err != nil {
 		return
 	}
-	go func() {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(body))
+	// A URL do webhook é configurada pelo operador — apenas o esquema é validado.
+	if _, err := parseHTTPURL(url); err != nil {
+		s.log.Warn("webhook: url inválida, evento descartado", "url", url, "err", err)
+		return
+	}
+	goSafe(s.log, func() {
+		webhookSem <- struct{}{}
+		defer func() { <-webhookSem }()
+		resp, err := doWithRetry(webhookClient, func() (*http.Request, error) {
+			req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			return req, nil
+		}, 3, s.log, "session-webhook")
 		if err != nil {
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := webhookClient.Do(req)
-		if err != nil {
-			s.log.Debug("webhook post failed", "url", url, "err", err)
+			s.log.Warn("webhook post failed após retries", "url", url, "event", event, "err", err)
 			return
 		}
 		_ = resp.Body.Close()
-	}()
+	})
 }
 
 // summarizeMessage extrai os campos úteis de uma mensagem recebida e inclui o

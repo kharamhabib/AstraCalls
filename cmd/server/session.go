@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"wacalls/internal/voip/call"
@@ -32,7 +33,9 @@ type Session struct {
 	mgr  *SessionManager
 	log  *slog.Logger
 
-	client *whatsmeow.Client
+	// client é atômico: replaceClient (logout/pair) troca a instância enquanto
+	// handlers HTTP e eventos a leem — sem lock isso era um data race.
+	client atomic.Pointer[whatsmeow.Client]
 	reg    *callRegistry
 
 	// store próprio desta sessão (1 banco por sessão, estilo WAHA)
@@ -44,6 +47,11 @@ type Session struct {
 	webhook  string
 	chatwoot ChatwootConfig
 	aiConfig AIConfig
+}
+
+// getClient devolve o cliente whatsmeow atual (seguro para leitura concorrente).
+func (s *Session) getClient() *whatsmeow.Client {
+	return s.client.Load()
 }
 
 func (s *Session) setWebhook(url string) {
@@ -84,34 +92,34 @@ func (s *Session) getAIConfig() AIConfig {
 
 func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {
 	s := &Session{
-		id:     id,
-		name:   name,
-		mgr:    mgr,
-		log:    mgr.log.With("session", id),
-		client: client,
-		auth:   AuthSnapshot{State: "connecting"},
-		reg:    newCallRegistry(),
+		id:   id,
+		name: name,
+		mgr:  mgr,
+		log:  mgr.log.With("session", id),
+		auth: AuthSnapshot{State: "connecting"},
+		reg:  newCallRegistry(),
 	}
+	s.client.Store(client)
 	client.AddEventHandler(s.handleEvent)
 	return s
 }
 
 func (s *Session) createCall(callID string) *call.CallManager {
-	cm := call.NewCallManager(wa.NewSocket(s.client), s.log)
+	cm := call.NewCallManager(wa.NewSocket(s.getClient()), s.log)
 	s.wireCall(cm, callID)
 	s.reg.add(callID, &activeCall{cm: cm})
 	return cm
 }
 
 func (s *Session) wireCall(cm *call.CallManager, callID string) {
-	cm.OnIncoming = func(c *call.CallInfo) {
+	cm.SetOnIncoming(func(c *call.CallInfo) {
 		s.mgr.broker.upsertCall(CallRecord{
 			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: c.PeerJid,
 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
 		})
 		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid)
-	}
-	cm.OnStateChange = func(c *call.CallInfo) {
+	})
+	cm.AddStateListener(func(c *call.CallInfo) {
 		if c.IsEnded() {
 			s.removeCall(c.CallID)
 			s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
@@ -131,25 +139,25 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			rec.StartedAt = existing.StartedAt
 		}
 		s.mgr.broker.upsertCall(rec)
-	}
-	cm.OnEnded = func(c *call.CallInfo) {
+	})
+	cm.SetOnEnded(func(c *call.CallInfo) {
 		s.removeCall(c.CallID)
 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
 		if s.mgr.Scheduler != nil {
 			s.mgr.Scheduler.CleanupAgent(c.CallID)
 		}
-	}
-	cm.OnPeerAudio = func(pcm16 []float32) {
-		ac, ok := s.reg.get(callID)
-		if !ok || ac.bridge == nil || ac.browserOpus == nil {
-			s.log.Debug("OnPeerAudio: inactive or missing components", "ok", ok, "has_bridge", ac.bridge != nil, "has_opus", ac.browserOpus != nil)
+	})
+	cm.SetOnPeerAudio(func(pcm16 []float32) {
+		bridge, browserOpus, ok := s.reg.getBridge(callID)
+		if !ok || bridge == nil || browserOpus == nil {
+			s.log.Debug("OnPeerAudio: inactive or missing components", "ok", ok, "has_bridge", bridge != nil, "has_opus", browserOpus != nil)
 			return
 		}
 		// O browserOpus agora opera a 16kHz, evitando crash no resampler SILK da lib opus_mlow.
 		// Fatiamos em chunks de 320 amostras (20ms a 16kHz) para codificação segura.
-		fs := ac.browserOpus.FrameSize() // fs = 320
+		fs := browserOpus.FrameSize() // fs = 320
 		for off := 0; off+fs <= len(pcm16); off += fs {
-			opus, err := ac.browserOpus.Encode(pcm16[off : off+fs])
+			opus, err := browserOpus.Encode(pcm16[off : off+fs])
 			if err != nil {
 				s.log.Error("OnPeerAudio: Encode failed", "err", err)
 				continue
@@ -158,12 +166,43 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 				continue
 			}
 			// Envia cada chunk de 20ms
-			err = ac.bridge.WriteOpus(opus, 20*time.Millisecond)
+			err = bridge.WriteOpus(opus, 20*time.Millisecond)
 			if err != nil {
 				s.log.Error("OnPeerAudio: WriteOpus failed", "err", err)
 			}
 		}
-	}
+	})
+}
+
+// attachServerAI registra um listener que acopla um ServerAIAgent assim que a
+// chamada ficar ativa (uma única vez, mesmo se o estado Active for emitido mais
+// de uma vez). peerFn resolve o telefone do peer no momento do acoplamento.
+// Substitui o antigo padrão "ler → embrulhar → reatribuir OnStateChange",
+// que tinha data race e podia perder wrappers concorrentes.
+func (s *Session) attachServerAI(cm *call.CallManager, callID, direction string, cfg AIConfig, peerFn func(info *call.CallInfo) string) {
+	var once sync.Once
+	cm.AddStateListener(func(info *call.CallInfo) {
+		if info.IsEnded() || info.StateData.State != core.CallStateActive {
+			return
+		}
+		once.Do(func() {
+			goSafe(s.log, func() {
+				peer := ""
+				if peerFn != nil {
+					peer = peerFn(info)
+				}
+				agent := NewServerAIAgent(s, callID, peer, direction, cm, cfg, s.log)
+				if err := agent.Start(s.mgr.appCtx); err != nil {
+					s.log.Error("[ServerAI] Erro ao iniciar agente", "err", err, "callId", callID, "direction", direction)
+					return
+				}
+				if s.mgr.Scheduler != nil {
+					s.mgr.Scheduler.RegisterAgent(callID, agent)
+				}
+				s.log.Info("[ServerAI] Agente IA acoplado à chamada", "callId", callID, "direction", direction)
+			})
+		})
+	})
 }
 
 func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
@@ -230,7 +269,7 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 					creator = evt.From.String()
 				}
 				reject := signaling.BuildRejectStanza(evt.From, info.CallID, wanode.MustJID(creator))
-				_ = wa.NewSocket(s.client).SendNode(ctx, reject)
+				_ = wa.NewSocket(s.getClient()).SendNode(ctx, reject)
 				s.log.Info("inbound call rejected: server/companion call block active", "call_id", info.CallID)
 			}
 			return
@@ -263,7 +302,7 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 		s.log.Info("[ServerAI] Agendando auto-atendimento", "callId", callID, "peer", evt.From.String(), "delay", config.AutoAnswerDelay)
 
 		// Aceita a chamada com delay opcional
-		go func() {
+		goSafe(s.log, func() {
 			if config.AutoAnswerDelay > 0 {
 				time.Sleep(time.Duration(config.AutoAnswerDelay) * time.Second)
 
@@ -300,35 +339,14 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 				return
 			}
 
-			// Aguarda a chamada ficar ativa e então acopla o agente
-			ac, ok := s.reg.get(callID)
-			if !ok {
-				return
-			}
-			originalOnState := ac.cm.OnStateChange
-			ac.cm.OnStateChange = func(info *call.CallInfo) {
-				if originalOnState != nil {
-					originalOnState(info)
+			// Acopla o agente assim que a chamada ficar ativa
+			s.attachServerAI(cm, callID, "inbound", config, func(info *call.CallInfo) string {
+				if callerPn != "" {
+					return callerPn
 				}
-				if info.IsEnded() {
-					return
-				}
-				if info.StateData.State == core.CallStateActive {
-					go func() {
-						peerPhone := callerPn
-						if peerPhone == "" {
-							peerPhone = info.PeerJid
-						}
-						agent := NewServerAIAgent(s, callID, peerPhone, "inbound", ac.cm, config, s.log)
-						if err := agent.Start(s.mgr.appCtx); err != nil {
-							s.log.Error("[ServerAI] Erro ao iniciar agente", "err", err, "callId", callID)
-						} else if s.mgr.Scheduler != nil {
-							s.mgr.Scheduler.RegisterAgent(callID, agent)
-						}
-					}()
-				}
-			}
-		}()
+				return info.PeerJid
+			})
+		})
 	}
 }
 
@@ -342,7 +360,7 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
 		creator = from.String()
 	}
 	reject := signaling.BuildRejectStanza(from, info.CallID, wanode.MustJID(creator))
-	_ = wa.NewSocket(s.client).SendNode(ctx, reject)
+	_ = wa.NewSocket(s.getClient()).SendNode(ctx, reject)
 	s.log.Info("inbound call rejected: session at capacity", "call_id", info.CallID)
 }
 
@@ -350,7 +368,7 @@ func (s *Session) handleEvent(rawEvt any) {
 	ctx := context.Background()
 	switch evt := rawEvt.(type) {
 	case *events.Connected:
-		if id := s.client.Store.ID; id != nil {
+		if id := s.getClient().Store.ID; id != nil {
 			_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
 		}
 		s.setAuth(AuthSnapshot{State: "open", Paired: true})
@@ -395,18 +413,18 @@ func (s *Session) handleEvent(rawEvt any) {
 }
 
 func (s *Session) connect(ctx context.Context) error {
-	if s.client.Store.ID != nil {
-		return s.client.Connect()
+	if s.getClient().Store.ID != nil {
+		return s.getClient().Connect()
 	}
 	return s.startPairing(ctx)
 }
 
 func (s *Session) startPairing(ctx context.Context) error {
-	qrChan, err := s.client.GetQRChannel(ctx)
+	qrChan, err := s.getClient().GetQRChannel(ctx)
 	if err != nil {
 		return err
 	}
-	if err := s.client.Connect(); err != nil {
+	if err := s.getClient().Connect(); err != nil {
 		return err
 	}
 	go func() {
@@ -418,7 +436,7 @@ func (s *Session) startPairing(ctx context.Context) error {
 				s.setAuth(AuthSnapshot{State: "qr", QR: evt.Code})
 				s.mgr.broker.emitSessionQR(s.id, evt.Code)
 			case "success":
-				if id := s.client.Store.ID; id != nil {
+				if id := s.getClient().Store.ID; id != nil {
 					_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
 				}
 				s.setAuth(AuthSnapshot{State: "open", Paired: true})
@@ -443,7 +461,7 @@ func (s *Session) info() SessionInfo {
 	a := s.auth
 	s.mu.Unlock()
 	jid := ""
-	if id := s.client.Store.ID; id != nil {
+	if id := s.getClient().Store.ID; id != nil {
 		jid = id.String()
 	}
 	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != ""}
@@ -501,14 +519,14 @@ func (s *Session) teardownAllCalls() {
 
 func (s *Session) replaceClient(client *whatsmeow.Client) {
 	s.teardownAllCalls()
-	s.client.Disconnect()
-	s.client = client
+	s.getClient().Disconnect()
+	s.client.Store(client)
 	client.AddEventHandler(s.handleEvent)
 }
 
 func (s *Session) shutdown() {
 	s.teardownAllCalls()
-	s.client.Disconnect()
+	s.getClient().Disconnect()
 	if s.waDB != nil {
 		_ = s.waDB.Close()
 	}
