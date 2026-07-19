@@ -4,8 +4,6 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      # Porta HTTP principal
-      - "8080:8080"
       # Porta de mídia WebRTC (VoIP) necessária para o fluxo de áudio (UDP + TCP Mux)
       - "${WACALLS_UDP_PORT:-50000}:${WACALLS_UDP_PORT:-50000}/udp"
       - "${WACALLS_UDP_PORT:-50000}:${WACALLS_UDP_PORT:-50000}/tcp"
