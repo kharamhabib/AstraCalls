@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,9 +24,11 @@ import (
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	"google.golang.org/protobuf/proto"
 )
 
 type Session struct {
@@ -112,6 +116,12 @@ func (s *Session) createCall(callID string) *call.CallManager {
 }
 
 func (s *Session) wireCall(cm *call.CallManager, callID string) {
+	callStartTime := time.Now()
+	rec, err := NewServerAudioRecorder(filepath.Join("storage", "recordings"), callID)
+	if err != nil {
+		s.log.Error("falha ao criar gravador de áudio no servidor", "callId", callID, "err", err)
+	}
+
 	cm.SetOnIncoming(func(c *call.CallInfo) {
 		s.mgr.broker.upsertCall(CallRecord{
 			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: c.PeerJid,
@@ -130,27 +140,51 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			dir = "inbound"
 		}
 		existing, _ := s.mgr.broker.getCall(c.CallID)
-		rec := CallRecord{
+		recRecord := CallRecord{
 			SessionID: s.id, CallID: c.CallID, Direction: dir, Peer: c.PeerJid,
 			StartedAt: time.Now().UnixMilli(), Status: mapStatus(c.StateData.State),
 		}
 		if existing != nil {
-			rec.Owner = existing.Owner
-			rec.StartedAt = existing.StartedAt
+			recRecord.Owner = existing.Owner
+			recRecord.StartedAt = existing.StartedAt
 		}
-		s.mgr.broker.upsertCall(rec)
+		s.mgr.broker.upsertCall(recRecord)
 	})
 	cm.SetOnEnded(func(c *call.CallInfo) {
+		if rec != nil {
+			rec.Close()
+			recURL := fmt.Sprintf("/api/sessions/%s/recordings/%s", s.id, c.CallID)
+			_ = s.mgr.store.updateCallRecording(context.Background(), s.id, c.CallID, recURL)
+		}
+
 		s.removeCall(c.CallID)
 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
 		if s.mgr.Scheduler != nil {
 			s.mgr.Scheduler.CleanupAgent(c.CallID)
 		}
+
+		// Disparo de automações NPS e Missed Follow-up
+		cfg := s.getAIConfig()
+		durationSec := int(time.Since(callStartTime).Seconds())
+		if c.StateData.State == core.CallStateActive || durationSec > 5 {
+			if s.mgr.nps != nil {
+				s.mgr.nps.ScheduleNPS(s.id, c.CallID, c.PeerJid, durationSec, cfg.NPS)
+			}
+		} else {
+			if s.mgr.followup != nil {
+				s.mgr.followup.ScheduleFollowup(s.id, c.CallID, c.PeerJid, cfg.MissedFollowup)
+			}
+		}
 	})
+
+	if rec != nil {
+		cm.AddPeerAudioListener(rec.WriteInbound)
+		cm.AddOutgoingAudioListener(rec.WriteOutbound)
+	}
+
 	cm.SetOnPeerAudio(func(pcm16 []float32) {
 		bridge, browserOpus, ok := s.reg.getBridge(callID)
 		if !ok || bridge == nil || browserOpus == nil {
-			s.log.Debug("OnPeerAudio: inactive or missing components", "ok", ok, "has_bridge", bridge != nil, "has_opus", browserOpus != nil)
 			return
 		}
 		// O browserOpus agora opera a 16kHz, evitando crash no resampler SILK da lib opus_mlow.
@@ -378,6 +412,19 @@ func (s *Session) handleEvent(rawEvt any) {
 		if !evt.Info.Timestamp.IsZero() && time.Since(evt.Info.Timestamp) > 1*time.Hour {
 			break
 		}
+		sender := evt.Info.Sender.String()
+		if s.mgr.followup != nil {
+			s.mgr.followup.CancelFollowup(sender)
+		}
+		text := evt.Message.GetConversation()
+		if text == "" && evt.Message.ExtendedTextMessage != nil {
+			text = evt.Message.ExtendedTextMessage.GetText()
+		}
+		if s.mgr.nps != nil && text != "" {
+			if s.mgr.nps.HandleIncomingMessage(s.id, sender, text) {
+				s.log.Info("resposta de NPS capturada com sucesso", "sender", sender)
+			}
+		}
 		s.dispatchWebhook("message", summarizeMessage(evt))
 		go s.chatwootPushIncoming(evt)
 	case *events.Receipt:
@@ -465,6 +512,21 @@ func (s *Session) info() SessionInfo {
 		jid = id.String()
 	}
 	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != ""}
+}
+
+func (s *Session) IsPaired() bool {
+	client := s.getClient()
+	return client != nil && client.Store != nil && client.Store.ID != nil
+}
+
+func (s *Session) SendMessage(ctx context.Context, to types.JID, text string) (whatsmeow.SendResponse, error) {
+	client := s.getClient()
+	if client == nil {
+		return whatsmeow.SendResponse{}, fmt.Errorf("cliente whatsmeow indisponível")
+	}
+	return client.SendMessage(ctx, to, &waE2E.Message{
+		Conversation: proto.String(text),
+	})
 }
 
 func (s *Session) setBridge(callID string, b *Bridge, oc media.Codec) {

@@ -52,6 +52,12 @@ func newServer(ctx context.Context, pgURL, pgNamespace, staticDir string, maxCal
 	broker.History = &pgHistoryPersister{store: store, log: log}
 	scheduler := NewAIScheduler(mgr, log)
 	mgr.Scheduler = scheduler
+	getSession := func(sessionID string) *Session {
+		s, _ := mgr.Get(sessionID)
+		return s
+	}
+	mgr.nps = newNPSEngine(log, store, getSession)
+	mgr.followup = newFollowupEngine(log, getSession)
 
 	return &server{
 		db:        provider,

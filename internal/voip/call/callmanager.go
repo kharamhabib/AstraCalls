@@ -53,11 +53,12 @@ type CallManager struct {
 	// Callbacks protegidos por cbMu. Listeners de estado são uma lista (sem
 	// wrapping): cada interessado (broker, agente IA) registra o seu com
 	// AddStateListener, eliminando as corridas de "ler → embrulhar → reatribuir".
-	cbMu           sync.RWMutex
-	stateListeners []func(*CallInfo)
-	onIncoming     func(*CallInfo)
-	onEnded        func(*CallInfo)
-	onPeerAudio    func([]float32)
+	cbMu                   sync.RWMutex
+	stateListeners         []func(*CallInfo)
+	onIncoming             func(*CallInfo)
+	onEnded                func(*CallInfo)
+	peerAudioListeners     []func([]float32)
+	outgoingAudioListeners []func([]float32)
 
 	recvMu        sync.Mutex
 	lastRtpSeq    uint16
@@ -77,6 +78,26 @@ func (m *CallManager) AddStateListener(fn func(*CallInfo)) {
 	m.cbMu.Unlock()
 }
 
+// AddPeerAudioListener registra um listener para áudio vindo do cliente.
+func (m *CallManager) AddPeerAudioListener(fn func([]float32)) {
+	if fn == nil {
+		return
+	}
+	m.cbMu.Lock()
+	m.peerAudioListeners = append(m.peerAudioListeners, fn)
+	m.cbMu.Unlock()
+}
+
+// AddOutgoingAudioListener registra um listener para áudio enviado ao cliente (IA/Operador).
+func (m *CallManager) AddOutgoingAudioListener(fn func([]float32)) {
+	if fn == nil {
+		return
+	}
+	m.cbMu.Lock()
+	m.outgoingAudioListeners = append(m.outgoingAudioListeners, fn)
+	m.cbMu.Unlock()
+}
+
 // SetOnIncoming define o handler de chamada recebida (1 por chamada).
 func (m *CallManager) SetOnIncoming(fn func(*CallInfo)) {
 	m.cbMu.Lock()
@@ -91,11 +112,9 @@ func (m *CallManager) SetOnEnded(fn func(*CallInfo)) {
 	m.cbMu.Unlock()
 }
 
-// SetOnPeerAudio define o handler de áudio do peer (1 por chamada).
+// SetOnPeerAudio registra um handler de áudio do peer.
 func (m *CallManager) SetOnPeerAudio(fn func([]float32)) {
-	m.cbMu.Lock()
-	m.onPeerAudio = fn
-	m.cbMu.Unlock()
+	m.AddPeerAudioListener(fn)
 }
 
 func (m *CallManager) incomingHandler() func(*CallInfo) {
@@ -112,8 +131,36 @@ func (m *CallManager) endedHandler() func(*CallInfo) {
 
 func (m *CallManager) peerAudioHandler() func([]float32) {
 	m.cbMu.RLock()
-	defer m.cbMu.RUnlock()
-	return m.onPeerAudio
+	listeners := make([]func([]float32), len(m.peerAudioListeners))
+	copy(listeners, m.peerAudioListeners)
+	m.cbMu.RUnlock()
+	if len(listeners) == 0 {
+		return nil
+	}
+	return func(pcm []float32) {
+		for _, fn := range listeners {
+			if fn != nil {
+				fn(pcm)
+			}
+		}
+	}
+}
+
+func (m *CallManager) outgoingAudioHandler() func([]float32) {
+	m.cbMu.RLock()
+	listeners := make([]func([]float32), len(m.outgoingAudioListeners))
+	copy(listeners, m.outgoingAudioListeners)
+	m.cbMu.RUnlock()
+	if len(listeners) == 0 {
+		return nil
+	}
+	return func(pcm []float32) {
+		for _, fn := range listeners {
+			if fn != nil {
+				fn(pcm)
+			}
+		}
+	}
 }
 
 func (m *CallManager) isDuplicateRtp(seq uint16) bool {

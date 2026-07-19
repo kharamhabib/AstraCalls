@@ -31,6 +31,7 @@ type CallRecord struct {
 	Summary      string     `json:"summary,omitempty"`
 	TicketOpened bool       `json:"ticketOpened,omitempty"`
 	TicketReason string     `json:"ticketReason,omitempty"`
+	RecordingURL string     `json:"recordingUrl,omitempty"`
 }
 
 type AuthSnapshot struct {

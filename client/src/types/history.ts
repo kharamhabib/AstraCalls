@@ -10,4 +10,5 @@ export type HistoryRow = {
   summary?: string;
   ticketOpened?: boolean;
   ticketReason?: string;
+  recordingUrl?: string;
 };

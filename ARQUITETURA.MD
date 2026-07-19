@@ -65,6 +65,9 @@ astracall/AstraCalls/
 ├── cmd/
 │   ├── migrate/                     # Migrações e setup do PostgreSQL
 │   └── server/                      # Servidor Go Principal
+│       ├── followup.go              # [NOVO] Motor background de follow-up automatizado para chamadas perdidas
+│       ├── nps.go                   # [NOVO] Motor de pesquisas de satisfação NPS via WhatsApp + alertas a supervisores
+│       ├── recorder.go              # [NOVO] Gravador de áudio de ligações no servidor (WAV PCM 16kHz)
 │       ├── ai_agent.go              # Agente de voz server-side (WA<->Gemini + tools + post-call)
 │       ├── ai_scheduler.go          # Scheduler background de ligações programadas do servidor
 │       ├── aiconfig.go              # Handlers REST de configuração da IA

@@ -7,6 +7,7 @@ import { useDevices } from "@/stores/devices";
 import { useAcceptCall } from "@/hooks/useAcceptCall";
 import { useRejectCall } from "@/hooks/useRejectCall";
 import { useContactInfo } from "@/hooks/useContactInfo";
+import { formatPhoneNumber } from "@/utils/format";
 import { getAIConfig } from "@/services/ai";
 import { useAIAgents } from "@/stores/ai";
 import { useNow } from "@/lib/use-now";
@@ -143,10 +144,10 @@ export const IncomingCallModal = () => {
           <div className="space-y-1">
             <DialogTitle className="text-xl font-bold text-foreground">Chamada Recebida</DialogTitle>
             <DialogDescription className="text-base font-semibold text-primary truncate max-w-[260px] mx-auto">
-              {contact ? contact.name : incoming?.peer}
+              {contact?.name && contact.name !== contact.phone ? contact.name : formatPhoneNumber(contact?.phone || incoming?.peer)}
             </DialogDescription>
-            {contact && contact.name !== incoming?.peer && (
-              <p className="text-xs text-muted-foreground font-mono">{incoming?.peer.split("@")[0]}</p>
+            {contact?.name && contact.name !== contact.phone && (
+              <p className="text-xs text-muted-foreground font-mono">{formatPhoneNumber(contact?.phone || incoming?.peer)}</p>
             )}
           </div>
         </DialogHeader>

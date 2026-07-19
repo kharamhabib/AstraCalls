@@ -21,6 +21,20 @@ export type PostCallActions = {
   webhookUrl: string;
 };
 
+export type NPSConfig = {
+  enabled: boolean;
+  delaySec: number;
+  minCallDuration: number;
+  supervisorPhone: string;
+  messageTemplate: string;
+};
+
+export type MissedFollowupConfig = {
+  enabled: boolean;
+  delaySec: number;
+  messageTemplate: string;
+};
+
 export type AIConfig = {
   serverSideAI: boolean; // Se true, o servidor gerencia IA de voz e agendamentos autonomamente
   geminiApiKey: string;
@@ -40,6 +54,8 @@ export type AIConfig = {
   toolPrompts: Record<string, string>;
   customTools: CustomTool[];
   postCall: PostCallActions;
+  nps?: NPSConfig;
+  missedFollowup?: MissedFollowupConfig;
   customFields?: string;
   chatwootEnabled?: boolean; // preenchido em runtime pelo agente (não vem do backend)
 };
@@ -52,4 +68,23 @@ export type ScheduledCall = {
   prompt?: string; // Motivo ou roteiro personalizado para a IA seguir na ligação
   callId?: string; // ID da chamada iniciada por este agendamento
   summary?: string; // Resumo do atendimento gerado ao fim da ligação
+};
+
+export type CallRating = {
+  id: number;
+  sessionId: string;
+  callId: string;
+  phone: string;
+  score: number;
+  comment?: string;
+  createdAt: string;
+};
+
+export type NPSSummary = {
+  total: number;
+  average: number;
+  promoters: number;
+  neutrals: number;
+  detractors: number;
+  npsScore: number;
 };

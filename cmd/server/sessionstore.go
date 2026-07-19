@@ -58,8 +58,7 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	// Criar índice para buscas rápidas por sessão e chamada
 	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_call_transcripts_session_call ON call_transcripts(session_id, call_id)`)
 
-	// Histórico de chamadas persistido (o cache em memória do broker é hidratado
-	// a partir desta tabela no boot — summaries e chamados sobrevivem a restarts).
+	// Histórico de chamadas persistido
 	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS call_history (
 		session_id    TEXT NOT NULL,
 		call_id       TEXT NOT NULL,
@@ -72,11 +71,28 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 		summary       TEXT,
 		ticket_opened BOOLEAN NOT NULL DEFAULT FALSE,
 		ticket_reason TEXT,
+		recording_url TEXT,
 		PRIMARY KEY (session_id, call_id)
 	)`)
 	if err != nil {
 		return nil, fmt.Errorf("criar tabela call_history: %w", err)
 	}
+	_, _ = db.ExecContext(ctx, `ALTER TABLE call_history ADD COLUMN IF NOT EXISTS recording_url TEXT`)
+
+	// Criar a tabela de pesquisas NPS
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS call_ratings (
+		id         SERIAL PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		call_id    TEXT NOT NULL,
+		phone      TEXT NOT NULL,
+		score      INT NOT NULL,
+		comment    TEXT,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`)
+	if err != nil {
+		return nil, fmt.Errorf("criar tabela call_ratings: %w", err)
+	}
+	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_call_ratings_session ON call_ratings(session_id)`)
 
 	return &sessionStore{db: db}, nil
 }
@@ -210,16 +226,17 @@ func (s *sessionStore) saveCallHistory(ctx context.Context, rec CallRecord) erro
 		owner = rec.Owner
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO call_history (session_id, call_id, owner, direction, peer, started_at, ended_at, end_reason, summary, ticket_opened, ticket_reason)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		INSERT INTO call_history (session_id, call_id, owner, direction, peer, started_at, ended_at, end_reason, summary, ticket_opened, ticket_reason, recording_url)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (session_id, call_id) DO UPDATE SET
 			owner = EXCLUDED.owner,
 			ended_at = EXCLUDED.ended_at,
 			end_reason = EXCLUDED.end_reason,
 			summary = COALESCE(NULLIF(EXCLUDED.summary, ''), call_history.summary),
 			ticket_opened = call_history.ticket_opened OR EXCLUDED.ticket_opened,
-			ticket_reason = COALESCE(NULLIF(EXCLUDED.ticket_reason, ''), call_history.ticket_reason)
-	`, rec.SessionID, rec.CallID, owner, rec.Direction, rec.Peer, rec.StartedAt, endedAt, rec.EndReason, rec.Summary, rec.TicketOpened, rec.TicketReason)
+			ticket_reason = COALESCE(NULLIF(EXCLUDED.ticket_reason, ''), call_history.ticket_reason),
+			recording_url = COALESCE(NULLIF(EXCLUDED.recording_url, ''), call_history.recording_url)
+	`, rec.SessionID, rec.CallID, owner, rec.Direction, rec.Peer, rec.StartedAt, endedAt, rec.EndReason, rec.Summary, rec.TicketOpened, rec.TicketReason, rec.RecordingURL)
 	return err
 }
 
@@ -227,7 +244,7 @@ func (s *sessionStore) saveCallHistory(ctx context.Context, rec CallRecord) erro
 func (s *sessionStore) listCallHistory(ctx context.Context, sessionID string, limit int) ([]CallRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT session_id, call_id, owner, direction, peer, started_at, ended_at,
-		       COALESCE(end_reason,''), COALESCE(summary,''), ticket_opened, COALESCE(ticket_reason,'')
+		       COALESCE(end_reason,''), COALESCE(summary,''), ticket_opened, COALESCE(ticket_reason,''), COALESCE(recording_url,'')
 		FROM call_history
 		WHERE session_id = $1
 		ORDER BY started_at DESC
@@ -243,7 +260,7 @@ func (s *sessionStore) listCallHistory(ctx context.Context, sessionID string, li
 		var rec CallRecord
 		var owner *string
 		var endedAt *int64
-		if err := rows.Scan(&rec.SessionID, &rec.CallID, &owner, &rec.Direction, &rec.Peer, &rec.StartedAt, &endedAt, &rec.EndReason, &rec.Summary, &rec.TicketOpened, &rec.TicketReason); err != nil {
+		if err := rows.Scan(&rec.SessionID, &rec.CallID, &owner, &rec.Direction, &rec.Peer, &rec.StartedAt, &endedAt, &rec.EndReason, &rec.Summary, &rec.TicketOpened, &rec.TicketReason, &rec.RecordingURL); err != nil {
 			return nil, err
 		}
 		rec.Owner = owner
@@ -262,6 +279,107 @@ func (s *sessionStore) listCallHistory(ctx context.Context, sessionID string, li
 func (s *sessionStore) updateCallSummary(ctx context.Context, sessionID, callID, summary string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE call_history SET summary = $3 WHERE session_id = $1 AND call_id = $2`, sessionID, callID, summary)
 	return err
+}
+
+// updateCallRecording persiste a URL de gravação de uma chamada do histórico.
+func (s *sessionStore) updateCallRecording(ctx context.Context, sessionID, callID, recordingURL string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE call_history SET recording_url = $3 WHERE session_id = $1 AND call_id = $2`, sessionID, callID, recordingURL)
+	return err
+}
+
+// ---- Métodos da Pesquisa NPS ----
+
+type CallRating struct {
+	ID        int       `json:"id"`
+	SessionID string    `json:"sessionId"`
+	CallID    string    `json:"callId"`
+	Phone     string    `json:"phone"`
+	Score     int       `json:"score"`
+	Comment   string    `json:"comment"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type NPSSummary struct {
+	Total      int     `json:"total"`
+	Average    float64 `json:"average"`
+	Promoters  int     `json:"promoters"`
+	Neutrals   int     `json:"neutrals"`
+	Detractors int     `json:"detractors"`
+	NPSScore   float64 `json:"npsScore"`
+}
+
+func (s *sessionStore) saveRating(ctx context.Context, r CallRating) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO call_ratings (session_id, call_id, phone, score, comment, created_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
+	`, r.SessionID, r.CallID, r.Phone, r.Score, r.Comment)
+	return err
+}
+
+func (s *sessionStore) listRatings(ctx context.Context, sessionID string, limit int) ([]CallRating, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, session_id, call_id, phone, score, COALESCE(comment, ''), created_at
+		FROM call_ratings
+		WHERE session_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []CallRating
+	for rows.Next() {
+		var r CallRating
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.CallID, &r.Phone, &r.Score, &r.Comment, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *sessionStore) getNPSSummary(ctx context.Context, sessionID string) (NPSSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT score FROM call_ratings WHERE session_id = $1
+	`, sessionID)
+	if err != nil {
+		return NPSSummary{}, err
+	}
+	defer rows.Close()
+
+	var sum, count, promoters, neutrals, detractors int
+	for rows.Next() {
+		var score int
+		if err := rows.Scan(&score); err != nil {
+			return NPSSummary{}, err
+		}
+		count++
+		sum += score
+		if score >= 9 {
+			promoters++
+		} else if score >= 7 {
+			neutrals++
+		} else {
+			detractors++
+		}
+	}
+	if count == 0 {
+		return NPSSummary{}, nil
+	}
+
+	avg := float64(sum) / float64(count)
+	nps := (float64(promoters-detractors) / float64(count)) * 100.0
+
+	return NPSSummary{
+		Total:      count,
+		Average:    avg,
+		Promoters:  promoters,
+		Neutrals:   neutrals,
+		Detractors: detractors,
+		NPSScore:   nps,
+	}, nil
 }
 
 // updateCallTicket persiste a abertura de chamado de uma chamada do histórico.

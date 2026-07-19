@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -81,6 +82,11 @@ func (s *server) routes() http.Handler {
 	// Proxy do Gemini (a API key nunca sai do servidor: o navegador conecta aqui)
 	mux.HandleFunc("GET /api/sessions/{sid}/gemini/ws", s.handleGeminiWS)
 	mux.HandleFunc("POST /api/sessions/{sid}/gemini/generateContent", s.handleGeminiGenerateContent)
+
+	// Gravações de áudio e NPS
+	mux.HandleFunc("GET /api/sessions/{sid}/recordings/{callId}", s.handleGetCallRecording)
+	mux.HandleFunc("GET /api/sessions/{sid}/nps", s.handleListNPS)
+	mux.HandleFunc("GET /api/sessions/{sid}/nps/summary", s.handleNPSSummary)
 
 	mux.HandleFunc("GET /api/sessions/{sid}/contacts/{jid}", s.handleGetContactInfo)
 
@@ -462,6 +468,7 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		Summary      string `json:"summary,omitempty"`
 		TicketOpened bool   `json:"ticketOpened,omitempty"`
 		TicketReason string `json:"ticketReason,omitempty"`
+		RecordingURL string `json:"recordingUrl,omitempty"`
 	}
 	
 	rows := make([]ExtendedRow, 0, len(rawRows))
@@ -489,6 +496,14 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		
+		recURL := row.RecordingURL
+		if recURL == "" {
+			wavPath := filepath.Join("storage", "recordings", fmt.Sprintf("%s.wav", row.CallID))
+			if _, err := os.Stat(wavPath); err == nil {
+				recURL = fmt.Sprintf("/api/sessions/%s/recordings/%s", sess.id, row.CallID)
+			}
+		}
+
 		rows = append(rows, ExtendedRow{
 			CallID:       row.CallID,
 			Peer:         row.Peer,
@@ -501,6 +516,7 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 			Summary:      row.Summary,
 			TicketOpened: row.TicketOpened,
 			TicketReason: row.TicketReason,
+			RecordingURL: recURL,
 		})
 	}
 	
@@ -815,7 +831,9 @@ func (s *server) handleGetContactInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var pictureURL string
-	pfp, err := sess.getClient().GetProfilePictureInfo(r.Context(), jid, &whatsmeow.GetProfilePictureParams{
+	pfpCtx, pfpCancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer pfpCancel()
+	pfp, err := sess.getClient().GetProfilePictureInfo(pfpCtx, jid, &whatsmeow.GetProfilePictureParams{
 		Preview: true,
 	})
 	if err == nil && pfp != nil {
@@ -994,4 +1012,54 @@ func (s *server) withRateLimit(next http.Handler, limiters *apiLimiters) http.Ha
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *server) handleGetCallRecording(w http.ResponseWriter, r *http.Request) {
+	sid := r.PathValue("sid")
+	callID := r.PathValue("callId")
+	if sid == "" || callID == "" {
+		http.Error(w, "sid and callId required", http.StatusBadRequest)
+		return
+	}
+	recordingsDir := filepath.Join("storage", "recordings")
+	filePath := filepath.Join(recordingsDir, fmt.Sprintf("%s.wav", callID))
+
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		http.Error(w, "recording not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "audio/wav")
+	http.ServeFile(w, r, filePath)
+}
+
+func (s *server) handleListNPS(w http.ResponseWriter, r *http.Request) {
+	sid := r.PathValue("sid")
+	sess := s.sessionByID(w, sid)
+	if sess == nil {
+		return
+	}
+	ratings, err := s.sessions.store.listRatings(r.Context(), sid, 100)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if ratings == nil {
+		ratings = []CallRating{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ratings": ratings})
+}
+
+func (s *server) handleNPSSummary(w http.ResponseWriter, r *http.Request) {
+	sid := r.PathValue("sid")
+	sess := s.sessionByID(w, sid)
+	if sess == nil {
+		return
+	}
+	summary, err := s.sessions.store.getNPSSummary(r.Context(), sid)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"summary": summary})
 }

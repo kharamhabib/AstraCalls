@@ -305,12 +305,13 @@ func (a *ServerAIAgent) Start(ctx context.Context) error {
 	return nil
 }
 
-// startPacedSender envia áudio PCM para o CallManager em intervalos regulares de 60ms.
+// startPacedSender envia áudio PCM para o CallManager em intervalos de 20ms (frame nativo do Opus).
 func (a *ServerAIAgent) startPacedSender(ctx context.Context) {
-	ticker := time.NewTicker(60 * time.Millisecond)
+	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 
-	frameSize := 960 // 60ms de áudio a 16kHz
+	frameSize := 320 // 20ms de áudio a 16kHz
+	idleTicks := 0
 
 	for {
 		select {
@@ -322,35 +323,44 @@ func (a *ServerAIAgent) startPacedSender(ctx context.Context) {
 			a.queueMu.Lock()
 			qLen := len(a.audioQueue)
 			if qLen == 0 {
+				idleTicks = 0
 				a.queueMu.Unlock()
 				continue
 			}
 
+			// Se a fila tiver menos que 20ms e ainda não acumulou o suficiente, aguarda até 3 ticks (60ms) sem descartar nem preencher com silêncio prematuro
+			if qLen < frameSize && idleTicks < 3 {
+				idleTicks++
+				a.queueMu.Unlock()
+				continue
+			}
+
+			idleTicks = 0
 			var frame []float32
 			if qLen >= frameSize {
 				frame = a.audioQueue[:frameSize]
 				a.audioQueue = a.audioQueue[frameSize:]
 			} else {
-				// Fim da fila: preenche o restante com silêncio
 				frame = make([]float32, frameSize)
 				copy(frame, a.audioQueue)
 				a.audioQueue = nil
 			}
 			a.queueMu.Unlock()
 
-			// Envia o frame ritmado para o WhatsApp
+			// Envia o frame ritmado de 20ms para o WhatsApp e gravador de áudio
 			a.cm.FeedCapturedPCM(frame)
 		}
 	}
 }
 
-// startInboundPacer envia áudio contínuo para o Gemini para manter a VAD (detecção de fala) ativa e evitar delays de silêncio.
+// startInboundPacer envia áudio contínuo para o Gemini para manter a VAD (detecção de fala) ativa e sem perdas de pacotes.
 func (a *ServerAIAgent) startInboundPacer(ctx context.Context) {
-	ticker := time.NewTicker(60 * time.Millisecond)
+	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 
-	frameSize := 960 // 60ms de áudio a 16kHz
+	frameSize := 320 // 20ms de áudio a 16kHz
 	silenceFrame := make([]float32, frameSize)
+	idleTicks := 0
 
 	for {
 		select {
@@ -364,17 +374,28 @@ func (a *ServerAIAgent) startInboundPacer(ctx context.Context) {
 
 			var frame []float32
 			if qLen >= frameSize {
+				idleTicks = 0
 				frame = a.inboundQueue[:frameSize]
 				a.inboundQueue = a.inboundQueue[frameSize:]
 				a.inboundMu.Unlock()
-			} else {
-				// Fila incompleta ou vazia: limpa resíduos e usa silêncio
-				a.inboundQueue = nil
+			} else if qLen > 0 && idleTicks < 3 {
+				// Aguarda pacotes de entrada acumularem sem descartar
+				idleTicks++
 				a.inboundMu.Unlock()
-				frame = silenceFrame
+				continue
+			} else {
+				idleTicks = 0
+				if qLen > 0 {
+					frame = make([]float32, frameSize)
+					copy(frame, a.inboundQueue)
+					a.inboundQueue = nil
+				} else {
+					frame = silenceFrame
+				}
+				a.inboundMu.Unlock()
 			}
 
-			// Cancelamento de Eco Acústico básico: se a IA estiver falando, ignoramos o microfone do usuário
+			// Cancelamento de Eco Acústico básico: se a IA estiver falando, enviamos silêncio ao Gemini
 			a.queueMu.Lock()
 			aiSpeaking := len(a.audioQueue) > 0
 			a.queueMu.Unlock()
@@ -756,18 +777,24 @@ Transcrição:
 
 	// Envia para o cliente
 	if config.PostCall.SendClient {
-		clientJID, err := types.ParseJID(a.peer)
+		clientJID, err := resolveRecipient(a.peer)
 		if err == nil {
 			// Se for LID, tenta buscar o número de telefone (PN) real para envio correto do WhatsApp
-			if clientJID.Server == "lid" && a.sess.getClient().Store.LIDs != nil {
+			if clientJID.Server == "lid" && a.sess.getClient() != nil && a.sess.getClient().Store.LIDs != nil {
 				if pn, e := a.sess.getClient().Store.LIDs.GetPNForLID(ctx, clientJID); e == nil && !pn.IsEmpty() {
 					clientJID = pn
 				}
 			}
-			_, _ = a.sess.getClient().SendMessage(ctx, clientJID, &waE2E.Message{
+			respSend, errSend := a.sess.getClient().SendMessage(ctx, clientJID, &waE2E.Message{
 				Conversation: proto.String(summary),
 			})
-			a.log.Info("[ServerAIAgent] Resumo enviado para cliente", "to", clientJID.String())
+			if errSend != nil {
+				a.log.Error("[ServerAIAgent] Erro ao enviar resumo para cliente", "to", clientJID.String(), "err", errSend)
+			} else {
+				a.log.Info("[ServerAIAgent] Resumo enviado para cliente com sucesso", "to", clientJID.String(), "msgID", respSend.ID)
+			}
+		} else {
+			a.log.Error("[ServerAIAgent] Falha ao resolver JID do cliente para envio de resumo", "peer", a.peer, "err", err)
 		}
 	}
 

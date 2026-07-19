@@ -3,13 +3,17 @@ import { PlusCircle } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { AppShell } from "@/components/layout/AppShell";
+import { DashboardPage } from "@/pages/DashboardPage";
+import { ConnectionsPage } from "@/pages/ConnectionsPage";
 import { CallsPage } from "@/pages/CallsPage";
-import { SessionPairing } from "@/components/domain/session/SessionPairing";
-import { SessionHeader } from "@/components/domain/session/SessionHeader";
+import { SettingsTab } from "@/components/domain/settings/SettingsTab";
+import { SchedulesTab } from "@/components/domain/schedule/SchedulesTab";
+import { WebphoneDrawer } from "@/components/domain/call/WebphoneDrawer";
 import { IncomingCallModal } from "@/components/domain/call/IncomingCallModal";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ensureSessionsWired, useSessions } from "@/stores/sessions";
 import { ensureCallsWired } from "@/stores/calls";
+import { useNavigation } from "@/stores/navigation";
 import { useTheme } from "@/stores/theme";
 import { useAICallHandler } from "@/hooks/useAICallHandler";
 import { useAICallScheduler } from "@/hooks/useAICallScheduler";
@@ -31,6 +35,7 @@ const DevAgentation = (): React.ReactElement | null => {
 export const App = () => {
   const sessions = useSessions((s) => s.sessions);
   const activeId = useSessions((s) => s.activeId);
+  const { activeSection } = useNavigation();
   const theme = useTheme((s) => s.theme);
 
   // Ativa os hooks automáticos de IA e Agendamentos
@@ -47,21 +52,26 @@ export const App = () => {
   return (
     <TooltipProvider delayDuration={200}>
       <AppShell>
-        {sessions.length === 0 ? (
+        {activeSection === "connections" ? (
+          <ConnectionsPage />
+        ) : sessions.length === 0 ? (
           <EmptyState
             icon={<PlusCircle className="h-6 w-6" />}
-            title="Nenhuma conta ainda"
-            description="Crie sua primeira conta WhatsApp na barra lateral para começar a ligar."
+            title="Nenhuma conta conectada"
+            description="Acesse a aba 'Conexões' para cadastrar sua primeira sessão do WhatsApp."
           />
         ) : active ? (
-          <div className="space-y-4">
-            <SessionHeader session={active} />
-            {active.paired ? <CallsPage sid={active.id} /> : <SessionPairing session={active} />}
-          </div>
+          <>
+            {activeSection === "dashboard" && <DashboardPage sid={active.id} />}
+            {activeSection === "calls" && <CallsPage sid={active.id} />}
+            {activeSection === "schedules" && <SchedulesTab sid={active.id} />}
+            {activeSection === "settings" && <SettingsTab sid={active.id} />}
+          </>
         ) : (
-          <EmptyState title="Selecione uma conta" description="Escolha uma conta na barra lateral." />
+          <EmptyState title="Selecione uma conta" description="Escolha uma conta no menu superior ou lateral." />
         )}
       </AppShell>
+      <WebphoneDrawer />
       <IncomingCallModal />
       <Toaster theme={theme} position="top-right" richColors closeButton />
       <DevAgentation />

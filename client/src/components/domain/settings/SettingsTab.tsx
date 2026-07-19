@@ -12,13 +12,18 @@ import { ToolsSettingsPane } from "./ToolsSettingsPane";
 import { PostCallSettingsPane } from "./PostCallSettingsPane";
 import { ChatwootSettingsPane } from "./ChatwootSettingsPane";
 import { GeneralSettingsPane } from "./GeneralSettingsPane";
+import { NPSSettingsPane } from "./NPSSettingsPane";
+import { FollowupSettingsPane } from "./FollowupSettingsPane";
+import { Star, PhoneMissed } from "lucide-react";
 
-type SubTab = "ai" | "tools" | "post_call" | "chatwoot" | "general";
+type SubTab = "ai" | "tools" | "post_call" | "nps" | "followup" | "chatwoot" | "general";
 
 const subTabs: { id: SubTab; label: string; icon: any }[] = [
   { id: "ai", label: "Voz & IA", icon: Sparkles },
   { id: "tools", label: "Ferramentas", icon: Code },
   { id: "post_call", label: "Pós-Chamada", icon: Heart },
+  { id: "nps", label: "Pesquisa NPS", icon: Star },
+  { id: "followup", label: "Follow-up", icon: PhoneMissed },
   { id: "chatwoot", label: "Chatwoot", icon: MessageSquare },
   { id: "general", label: "Geral", icon: Settings2 },
 ];
@@ -205,11 +210,17 @@ export const SettingsTab = ({ sid }: { sid: string }) => {
         {active === "post_call" && aiConfig && (
           <PostCallSettingsPane config={aiConfig} onChange={setAiConfig} />
         )}
+        {active === "nps" && aiConfig && (
+          <NPSSettingsPane sid={sid} config={aiConfig} onChange={setAiConfig} />
+        )}
+        {active === "followup" && aiConfig && (
+          <FollowupSettingsPane config={aiConfig} onChange={setAiConfig} />
+        )}
         {active === "chatwoot" && <ChatwootSettingsPane sid={sid} />}
         {active === "general" && <GeneralSettingsPane />}
 
         {/* Master AI Save actions for AI-related panes */}
-        {["ai", "tools", "post_call"].includes(active) && aiConfig && (
+        {["ai", "tools", "post_call", "nps", "followup"].includes(active) && aiConfig && (
           <div className="flex gap-2 justify-end pt-3 border-t">
             {enabled && (
               <Button

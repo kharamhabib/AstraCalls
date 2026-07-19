@@ -29,6 +29,20 @@ type PostCallActions struct {
 	WebhookURL     string `json:"webhookUrl"`
 }
 
+type NPSConfig struct {
+	Enabled         bool   `json:"enabled"`
+	DelaySec        int    `json:"delaySec"`
+	MinCallDuration int    `json:"minCallDuration"`
+	SupervisorPhone string `json:"supervisorPhone"`
+	MessageTemplate string `json:"messageTemplate"`
+}
+
+type MissedFollowupConfig struct {
+	Enabled         bool   `json:"enabled"`
+	DelaySec        int    `json:"delaySec"`
+	MessageTemplate string `json:"messageTemplate"`
+}
+
 var DefaultToolPrompts = map[string]string{
 	"hangup":        "* Ferramenta hangup (Desligar Chamada): Quando a conversa estiver resolvida, o cliente se despedir e não houver mais nenhuma pendência, agradeça pelo contato, despeça-se educadamente e chame a ferramenta hangup para desligar a ligação. Nunca deixe a ligação em silêncio ou pendente após a despedida.",
 	"open_ticket":   "* Ferramenta open_ticket (Abrir Chamado): Use esta ferramenta quando o cliente solicitar falar com um atendente humano, suporte ou precisar de ajuda especializada que a IA não consiga resolver. Pergunte brevemente o motivo do chamado, informe ao cliente que o chamado foi registrado/aberto e pergunte educadamente se há mais alguma coisa em que você possa ajudar. Não desligue a chamada após usar esta ferramenta — apenas aguarde a resposta do cliente e use a ferramenta hangup para finalizar quando ele não precisar de mais nada.",
@@ -37,26 +51,28 @@ var DefaultToolPrompts = map[string]string{
 }
 
 type AIConfig struct {
-	ServerSideAI      bool              `json:"serverSideAI"`
-	GeminiAPIKey      string            `json:"geminiApiKey"`
-	VoiceName         string            `json:"voiceName"`
-	LanguageCode      string            `json:"languageCode"`
-	SystemInstruction string            `json:"systemInstruction"`
-	AutoAnswer        bool              `json:"autoAnswer"`
-	AutoAnswerDelay   int               `json:"autoAnswerDelay"`
-	Temperature       float64           `json:"temperature"`
-	MaxDurationMin    int               `json:"maxDurationMin"`
-	SilenceOperator   bool              `json:"silenceOperator"`
-	TranscribeAudio   bool              `json:"transcribeAudio"`
-	ScheduledCalls    string            `json:"scheduledCalls"` // Array JSON de agendamentos
-	FirstUtterance    string            `json:"firstUtterance"`
-	ToolsEnabled      bool              `json:"toolsEnabled"`
-	PredefinedTools   []string          `json:"predefinedTools"`
-	ToolPrompts       map[string]string `json:"toolPrompts"`
-	CustomTools       []CustomTool      `json:"customTools"`
-	PostCall          PostCallActions   `json:"postCall"`
-	CustomFields      string            `json:"customFields"`
-	ChatwootEnabled   bool              `json:"chatwootEnabled"`
+	ServerSideAI      bool                 `json:"serverSideAI"`
+	GeminiAPIKey      string               `json:"geminiApiKey"`
+	VoiceName         string               `json:"voiceName"`
+	LanguageCode      string               `json:"languageCode"`
+	SystemInstruction string               `json:"systemInstruction"`
+	AutoAnswer        bool                 `json:"autoAnswer"`
+	AutoAnswerDelay   int                  `json:"autoAnswerDelay"`
+	Temperature       float64              `json:"temperature"`
+	MaxDurationMin    int                  `json:"maxDurationMin"`
+	SilenceOperator   bool                 `json:"silenceOperator"`
+	TranscribeAudio   bool                 `json:"transcribeAudio"`
+	ScheduledCalls    string               `json:"scheduledCalls"` // Array JSON de agendamentos
+	FirstUtterance    string               `json:"firstUtterance"`
+	ToolsEnabled      bool                 `json:"toolsEnabled"`
+	PredefinedTools   []string             `json:"predefinedTools"`
+	ToolPrompts       map[string]string    `json:"toolPrompts"`
+	CustomTools       []CustomTool         `json:"customTools"`
+	PostCall          PostCallActions      `json:"postCall"`
+	NPS               NPSConfig            `json:"nps"`
+	MissedFollowup    MissedFollowupConfig `json:"missedFollowup"`
+	CustomFields      string               `json:"customFields"`
+	ChatwootEnabled   bool                 `json:"chatwootEnabled"`
 }
 
 func (s *server) handleSetAIConfig(w http.ResponseWriter, r *http.Request) {

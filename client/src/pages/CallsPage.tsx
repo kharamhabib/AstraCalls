@@ -1,47 +1,79 @@
-import { useEffect, useState } from "react";
-import { PhoneCall } from "lucide-react";
-import { TabBar, type TabId } from "@/components/layout/TabBar";
-import { Dialer } from "@/components/domain/call/Dialer";
+import { useState } from "react";
+import { Phone, History, PhoneCall } from "lucide-react";
+import { Webphone } from "@/components/domain/call/Webphone";
 import { CallCard } from "@/components/domain/call/CallCard";
-import { OtherCallsList } from "@/components/domain/call/OtherCallsList";
-import { SchedulesTab } from "@/components/domain/schedule/SchedulesTab";
-import { SettingsTab } from "@/components/domain/settings/SettingsTab";
 import { EmptyState } from "@/components/shared/EmptyState";
-import { isMine, useCalls } from "@/stores/calls";
-import { getAIConfig } from "@/services/ai";
-import { parseScheduledCalls } from "@/lib/ai/scheduled-calls";
+import { useHistory } from "@/hooks/useHistory";
+import { HistoryItem } from "@/components/domain/history/HistoryDrawer";
+import { useCalls } from "@/stores/calls";
+import { cn } from "@/lib/utils";
+
+type TabId = "webphone" | "history";
 
 export const CallsPage = ({ sid }: { sid: string }) => {
+  const [activeTab, setActiveTab] = useState<TabId>("webphone");
   const calls = useCalls((s) => s.calls);
-  const [activeTab, setActiveTab] = useState<TabId>("dialer");
-  const [pendingCount, setPendingCount] = useState(0);
 
-  // Fetch schedule badge count
-  useEffect(() => {
-    getAIConfig(sid)
-      .then((r) => {
-        const schedules = parseScheduledCalls(r.aiConfig?.scheduledCalls);
-        const pending = schedules.filter((s) => s.active && new Date(s.time) > new Date());
-        setPendingCount(pending.length);
-      })
-      .catch(() => {});
-  }, [sid, activeTab]);
+  const { data: historyRows = [] } = useHistory(sid, activeTab === "history");
 
-  const sessionCalls = calls.filter((c) => c.sessionId === sid && c.status !== "ended");
-  const mine = sessionCalls.filter(isMine);
-  const others = sessionCalls.filter((c) => !isMine(c));
+  const activeCalls = calls.filter((c) => c.sessionId === sid && c.status !== "ended");
 
   return (
-    <div className="space-y-0">
-      <TabBar activeTab={activeTab} onTabChange={setActiveTab} scheduleBadge={pendingCount} />
+    <div className="space-y-6 max-w-5xl mx-auto animate-fade-in">
+      {/* Submenu Navigation Pills */}
+      <div className="flex items-center gap-2 border-b pb-3">
+        <button
+          onClick={() => setActiveTab("webphone")}
+          className={cn(
+            "flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all",
+            activeTab === "webphone"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          )}
+        >
+          <Phone className="h-4 w-4" />
+          <span>Webphone & Chamadas Ativas</span>
+        </button>
 
-      <div className="px-4 py-6 sm:px-6">
-        {activeTab === "dialer" && (
-          <div className="mx-auto max-w-3xl space-y-5 animate-fade-in">
-            <Dialer sid={sid} />
-            {mine.length > 0 ? (
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 stagger-children">
-                {mine.map((c) => (
+        <button
+          onClick={() => setActiveTab("history")}
+          className={cn(
+            "flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all",
+            activeTab === "history"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          )}
+        >
+          <History className="h-4 w-4" />
+          <span>Histórico & Gravações</span>
+        </button>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === "webphone" && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          {/* Left Column: Webphone */}
+          <div className="lg:col-span-5">
+            <Webphone sid={sid} />
+          </div>
+
+          {/* Right Column: Active Calls List */}
+          <div className="lg:col-span-7 space-y-4">
+            <h3 className="font-bold text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <PhoneCall className="h-4 w-4 text-primary" />
+                <span>Chamadas em Tempo Real</span>
+              </span>
+              {activeCalls.length > 0 && (
+                <span className="rounded-full bg-primary/10 text-primary text-xs font-bold px-2 py-0.5">
+                  {activeCalls.length} {activeCalls.length === 1 ? "chamada ativa" : "chamadas ativas"}
+                </span>
+              )}
+            </h3>
+
+            {activeCalls.length > 0 ? (
+              <div className="grid grid-cols-1 gap-4">
+                {activeCalls.map((c) => (
                   <CallCard key={c.callId} call={c} />
                 ))}
               </div>
@@ -49,16 +81,33 @@ export const CallsPage = ({ sid }: { sid: string }) => {
               <EmptyState
                 icon={<PhoneCall className="h-6 w-6" />}
                 title="Nenhuma chamada ativa"
-                description="Disque um número acima para iniciar uma chamada."
+                description="Disque um número no Webphone ao lado para iniciar um atendimento."
               />
             )}
-            <OtherCallsList calls={others} />
           </div>
-        )}
+        </div>
+      )}
 
-        {activeTab === "schedules" && <SchedulesTab sid={sid} />}
-        {activeTab === "settings" && <SettingsTab sid={sid} />}
-      </div>
+      {activeTab === "history" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-sm flex items-center gap-2">
+              <History className="h-4 w-4 text-primary" />
+              <span>Histórico Completo ({historyRows.length})</span>
+            </h3>
+          </div>
+
+          {historyRows.length === 0 ? (
+            <EmptyState title="Nenhum histórico encontrado" description="As ligações concluídas ou gravadas aparecerão aqui." />
+          ) : (
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {historyRows.map((r) => (
+                <HistoryItem key={r.callId} sid={sid} row={r} />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 };

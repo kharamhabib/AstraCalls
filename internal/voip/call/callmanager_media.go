@@ -31,6 +31,10 @@ func (m *CallManager) initCodec() {
 }
 
 func (m *CallManager) FeedCapturedPCM(data []float32) {
+	if handler := m.outgoingAudioHandler(); handler != nil {
+		handler(data)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

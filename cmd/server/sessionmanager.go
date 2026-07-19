@@ -19,8 +19,10 @@ type SessionManager struct {
 	store    *sessionStore
 	waLogger waLog.Logger
 	log      *slog.Logger
-	maxCalls int
+	maxCalls  int
 	Scheduler *AIScheduler
+	nps       *NPSEngine
+	followup  *FollowupEngine
 
 	mu       sync.RWMutex
 	sessions map[string]*Session

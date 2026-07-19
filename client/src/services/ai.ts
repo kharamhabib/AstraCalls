@@ -9,3 +9,10 @@ export const setAIConfig = (sid: string, config: AIConfig) =>
 
 export const deleteAIConfig = (sid: string) =>
   apiDelete(`/api/sessions/${sid}/ai-config`);
+
+export const getNPSSummary = (sid: string) =>
+  apiGet<{ summary: import("@/types/ai").NPSSummary }>(`/api/sessions/${sid}/nps/summary`);
+
+export const getNPSRatings = (sid: string) =>
+  apiGet<{ ratings: import("@/types/ai").CallRating[] }>(`/api/sessions/${sid}/nps`);
+

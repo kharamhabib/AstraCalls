@@ -1,160 +1,100 @@
-import { useState } from "react";
-import { Loader2, Plus, Trash2 } from "lucide-react";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import { LayoutDashboard, Radio, PhoneCall, Calendar, Settings, PhoneForwarded } from "lucide-react";
+import { useNavigation, type NavSection } from "@/stores/navigation";
+import { useSessions } from "@/stores/sessions";
 import { cn } from "@/lib/utils";
-import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
-import { setActiveSession, useSessions } from "@/stores/sessions";
-import { createSession, deleteSession } from "@/services/sessions";
-import type { SessionInfo, SessionState } from "@/types/session";
 
-const dotClass: Record<SessionState, string> = {
-  open: "bg-primary",
-  qr: "bg-warning",
-  connecting: "bg-muted-foreground/50",
-  logged_out: "bg-destructive",
-};
-
-const statusLabel: Record<SessionState, string> = {
-  open: "Online",
-  qr: "QR Code",
-  connecting: "Connecting",
-  logged_out: "Offline",
-};
-
-/** Returns initials from a session name (first 2 chars, uppercase) */
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
-}
+const navItems: { id: NavSection; label: string; icon: typeof LayoutDashboard }[] = [
+  { id: "dashboard", label: "Início", icon: LayoutDashboard },
+  { id: "connections", label: "Conexões", icon: Radio },
+  { id: "calls", label: "Chamadas", icon: PhoneCall },
+  { id: "schedules", label: "Agendamentos", icon: Calendar },
+  { id: "settings", label: "Ajustes", icon: Settings },
+];
 
 export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
+  const { activeSection, setActiveSection } = useNavigation();
   const sessions = useSessions((s) => s.sessions);
   const activeId = useSessions((s) => s.activeId);
-  const [creating, setCreating] = useState(false);
-  const [toDelete, setToDelete] = useState<SessionInfo | null>(null);
 
-  const onNew = async () => {
-    setCreating(true);
-    try {
-      const { id } = await createSession("WhatsApp");
-      setActiveSession(id);
-      onNavigate?.();
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const remove = async (id: string) => {
-    try {
-      await deleteSession(id);
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  };
+  const activeSession = sessions.find((s) => s.id === activeId);
 
   return (
-    <div className="flex h-full flex-col gap-2 p-3">
-      <h2 className="px-2 pt-1 text-xs font-semibold text-muted-foreground">
-        Accounts
-      </h2>
-      <div className="flex-1 space-y-1 overflow-y-auto custom-scrollbar">
-        {sessions.map((s) => (
-          <div
-            key={s.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => {
-              setActiveSession(s.id);
-              onNavigate?.();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                setActiveSession(s.id);
-                onNavigate?.();
-              }
-            }}
-            className={cn(
-              "group flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2.5 text-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-              s.id === activeId
-                ? "bg-accent text-accent-foreground shadow-sm"
-                : "hover:bg-muted/60",
-            )}
-          >
-            {/* Avatar with initials */}
-            <span
-              className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors",
-                s.id === activeId
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground",
-              )}
-            >
-              {getInitials(s.name)}
-            </span>
-
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-[13px]">{s.name}</p>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotClass[s.state])} />
-                <span className="text-[10px] text-muted-foreground">
-                  {statusLabel[s.state]}
-                </span>
-                {s.jid && (
-                  <>
-                    <span className="text-[10px] text-muted-foreground/40">·</span>
-                    <span className="truncate text-[10px] text-muted-foreground/70">
-                      {s.jid.split("@")[0]}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setToDelete(s);
-              }}
-              className="text-muted-foreground opacity-0 transition-all duration-200 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-destructive focus-visible:rounded"
-              aria-label={`Delete ${s.name}`}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+    <div className="flex h-full flex-col justify-between p-4 bg-sidebar text-sidebar-foreground">
+      <div className="space-y-6">
+        {/* Brand Header */}
+        <div className="flex items-center gap-3 px-2 py-1">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md">
+            <PhoneForwarded className="h-5 w-5" />
           </div>
-        ))}
-        {sessions.length === 0 && (
-          <p className="px-2 py-4 text-center text-sm text-muted-foreground">
-            No accounts yet.
-          </p>
-        )}
+          <div>
+            <h1 className="text-base font-bold tracking-tight text-foreground">AstraCall</h1>
+            <p className="text-[11px] font-medium text-muted-foreground">PABX IA WhatsApp</p>
+          </div>
+        </div>
+
+        {/* Navigation Items */}
+        <nav className="space-y-1.5">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeSection === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setActiveSection(item.id);
+                  onNavigate?.();
+                }}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-all duration-200",
+                  isActive
+                    ? "bg-primary/10 text-primary shadow-sm font-semibold"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                )}
+              >
+                <Icon className={cn("h-4 w-4 transition-transform duration-200", isActive && "scale-110 text-primary")} />
+                <span>{item.label}</span>
+                {item.id === "connections" && sessions.length > 0 && (
+                  <span className="ml-auto rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">
+                    {sessions.length}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
       </div>
 
-      <Separator className="my-1" />
-
-      <Button variant="outline" className="w-full gap-2" onClick={onNew} disabled={creating}>
-        {creating ? <Loader2 key="loader" className="h-4 w-4 animate-spin" /> : <Plus key="plus" className="h-4 w-4" />}
-        <span>New session</span>
-      </Button>
-
-      <ConfirmDialog
-        open={!!toDelete}
-        onOpenChange={(o) => !o && setToDelete(null)}
-        title="Delete account?"
-        description={toDelete ? `${toDelete.name} will be logged out and removed.` : undefined}
-        confirmLabel="Delete"
-        destructive
-        onConfirm={() => {
-          if (toDelete) void remove(toDelete.id);
-        }}
-      />
+      {/* Active Account Info Card at bottom */}
+      {activeSession && (
+        <div className="rounded-2xl border bg-card/60 p-3 shadow-xs backdrop-blur-xs">
+          <p className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-1.5 px-0.5">
+            Conta Ativa
+          </p>
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 text-primary text-xs font-bold shrink-0">
+              {activeSession.name.slice(0, 2).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-semibold">{activeSession.name}</p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full shrink-0",
+                    activeSession.state === "open"
+                      ? "bg-emerald-500"
+                      : activeSession.state === "qr"
+                      ? "bg-amber-500 animate-pulse"
+                      : "bg-red-500",
+                  )}
+                />
+                <span className="text-[11px] text-muted-foreground capitalize">
+                  {activeSession.state === "open" ? "Conectado" : activeSession.state === "qr" ? "Aguardando QR" : "Desconectado"}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

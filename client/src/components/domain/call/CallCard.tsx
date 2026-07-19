@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { PhoneOff, Sparkles } from "lucide-react";
+import { PhoneOff, Sparkles, PhoneIncoming, PhoneOutgoing, Mic, Volume2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { useNow } from "@/lib/use-now";
 import { useCalls } from "@/stores/calls";
 import { useDevices } from "@/stores/devices";
 import { useEndCall } from "@/hooks/useEndCall";
-import { formatCallDuration } from "@/utils/format";
+import { formatCallDuration, formatPhoneNumber } from "@/utils/format";
 import type { CallStatus, CallSummary } from "@/types/call";
 import { useAIAgents, type TranscriptLine } from "@/stores/ai";
 import { getAIConfig } from "@/services/ai";
@@ -25,13 +25,19 @@ const statusVariant: Record<CallStatus, "success" | "secondary" | "muted"> = {
   ended: "muted",
 };
 
-const Meter = ({ label, db }: { label: string; db: number }) => {
+const AudioMeterBar = ({ label, icon: Icon, db }: { label: string; icon: any; db: number }) => {
   const pct = Math.max(0, Math.min(100, Math.round(((db + 60) / 60) * 100)));
   return (
-    <div className="space-y-1">
-      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
-      <div 
-        className="h-1.5 overflow-hidden rounded-full bg-muted"
+    <div className="space-y-1.5 flex-1">
+      <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground">
+        <span className="flex items-center gap-1">
+          <Icon className="h-3 w-3 text-primary" />
+          <span>{label}</span>
+        </span>
+        <span className="font-mono text-[10px] opacity-75">{pct > 0 ? `${pct}%` : "mudo"}</span>
+      </div>
+      <div
+        className="h-2 overflow-hidden rounded-full bg-muted/60"
         role="progressbar"
         aria-label={label}
         aria-valuenow={pct}
@@ -39,7 +45,14 @@ const Meter = ({ label, db }: { label: string; db: number }) => {
         aria-valuemax={100}
       >
         <div
-          className="h-full rounded-full bg-gradient-to-r from-primary/70 to-primary transition-all duration-100"
+          className={cn(
+            "h-full rounded-full transition-all duration-150",
+            pct > 40
+              ? "bg-gradient-to-r from-emerald-500 to-teal-400"
+              : pct > 10
+              ? "bg-gradient-to-r from-primary/70 to-primary"
+              : "bg-muted-foreground/30",
+          )}
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -71,8 +84,19 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const [busyAI, setBusyAI] = useState(false);
   const isAIActive = useAIAgents((s) => s.activeAgentCalls.has(call.callId));
   const transcripts = useAIAgents((s) => s.transcripts[call.callId] || EMPTY_TRANSCRIPT);
+  const transcriptContainerRef = useRef<HTMLDivElement>(null);
 
   const { data: contact } = useContactInfo(call.sessionId, call.peer);
+
+  const displayPhone = formatPhoneNumber(contact?.phone || call.peer);
+  const displayName = contact?.name && contact.name !== contact.phone ? contact.name : displayPhone;
+  const hasContactName = Boolean(contact?.name && contact.name !== contact.phone);
+
+  useEffect(() => {
+    if (transcriptContainerRef.current) {
+      transcriptContainerRef.current.scrollTop = transcriptContainerRef.current.scrollHeight;
+    }
+  }, [transcripts]);
 
   useEffect(() => {
     getAIConfig(call.sessionId)
@@ -127,13 +151,7 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
           toast.error("Aguardando conexão de áudio do cliente...");
           return;
         }
-        const agent = new GeminiLiveAgent(
-          call.callId,
-          conn.pc,
-          conn.micStream,
-          remoteStream,
-          aiConfig
-        );
+        const agent = new GeminiLiveAgent(call.callId, conn.pc, conn.micStream, remoteStream, aiConfig);
         useAIAgents.getState().setAgentInstance(call.callId, agent);
         await agent.start();
         toast.success("IA de voz conectada a esta chamada!");
@@ -150,77 +168,99 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
     }
   };
 
+  const isInbound = call.direction === "inbound";
+  const DirectionIcon = isInbound ? PhoneIncoming : PhoneOutgoing;
+
   return (
-    <Card className="card-premium">
-      <CardContent className="space-y-3 p-4">
+    <Card className="rounded-2xl border bg-card/90 shadow-md backdrop-blur-xs transition-all hover:shadow-lg">
+      <CardContent className="space-y-4 p-5">
+        {/* Header Info */}
         <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            {contact?.pictureUrl ? (
-              <img
-                src={contact.pictureUrl}
-                alt={contact.name}
-                className="h-11 w-11 rounded-full object-cover border border-primary/10 shadow-sm"
-              />
-            ) : (
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground font-semibold text-sm border border-primary/5">
-                {contact ? getInitials(contact.name) : "?"}
-              </div>
-            )}
-            <div className="min-w-0">
-              <p className="truncate font-bold text-sm text-foreground">
-                {contact ? contact.name : call.peer}
-              </p>
-              {contact && contact.name !== call.peer && (
-                <p className="text-[10px] text-muted-foreground font-mono truncate max-w-[150px]">
-                  {call.peer.split("@")[0]}
-                </p>
+          <div className="flex items-center gap-3.5 min-w-0">
+            {/* Avatar Profile */}
+            <div className="relative shrink-0">
+              {contact?.pictureUrl ? (
+                <img
+                  src={contact.pictureUrl}
+                  alt={displayName}
+                  className="h-12 w-12 rounded-2xl object-cover border shadow-xs"
+                />
+              ) : (
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary font-extrabold text-sm border border-primary/20">
+                  {getInitials(displayName)}
+                </div>
               )}
-              <Badge variant={statusVariant[call.status]} className="mt-1 h-4 text-[9px] px-1.5 font-medium">
-                {formatCallDuration(call.startedAt, call.status)}
-              </Badge>
+              <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-background p-0.5 shadow-xs">
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              </span>
+            </div>
+
+            {/* Contact Details */}
+            <div className="min-w-0 space-y-0.5">
+              <h4 className="truncate font-extrabold text-base text-foreground leading-tight" title={displayName}>
+                {displayName}
+              </h4>
+
+              {hasContactName && (
+                <p className="text-xs font-semibold text-muted-foreground font-mono truncate">{displayPhone}</p>
+              )}
+
+              <div className="flex items-center gap-2 pt-0.5 flex-wrap">
+                <Badge variant={statusVariant[call.status]} className="h-5 text-[10px] px-2 font-bold rounded-md">
+                  {formatCallDuration(call.startedAt, call.status)}
+                </Badge>
+
+                <span className="flex items-center gap-1 text-[11px] font-semibold text-muted-foreground">
+                  <DirectionIcon className="h-3 w-3 text-primary" />
+                  <span>{isInbound ? "Recebida" : "Efetuada"}</span>
+                </span>
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+
+          {/* Action Control Buttons */}
+          <div className="flex items-center gap-2 shrink-0">
             {conn && aiConfig && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant={isAIActive ? "default" : "outline"}
-                    size="icon"
+                    size="sm"
                     disabled={busyAI}
                     onClick={toggleAI}
-                    className={
+                    className={cn(
+                      "h-9 gap-1.5 rounded-xl font-bold text-xs transition-all",
                       isAIActive
-                        ? "bg-warning hover:bg-warning/90 text-warning-foreground animate-pulse-glow"
-                        : ""
-                    }
-                    aria-label={isAIActive ? "Desativar IA" : "Ativar IA"}
+                        ? "bg-amber-500 hover:bg-amber-600 text-white shadow-md animate-pulse"
+                        : "hover:bg-primary/10",
+                    )}
                   >
-                    <Sparkles className={`h-4 w-4 ${isAIActive ? "fill-warning-foreground/20 text-warning-foreground" : "text-warning-text"}`} />
+                    <Sparkles className="h-4 w-4" />
+                    <span className="hidden sm:inline">{isAIActive ? "IA Ativa" : "Ativar IA"}</span>
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>{isAIActive ? "Desativar IA" : "Ativar IA"}</TooltipContent>
+                <TooltipContent>{isAIActive ? "Desativar IA nesta chamada" : "Conectar IA nesta chamada"}</TooltipContent>
               </Tooltip>
             )}
+
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="destructive"
                   size="icon"
-                  onClick={() => {
-                    console.log("[CallCard] Clicou para encerrar chamada:", { sid: call.sessionId, callId: call.callId });
-                    endCall.mutate({ sid: call.sessionId, callId: call.callId });
-                  }}
+                  onClick={() => endCall.mutate({ sid: call.sessionId, callId: call.callId })}
+                  className="h-9 w-9 rounded-xl shadow-xs"
                   aria-label="Encerrar chamada"
                 >
                   <PhoneOff className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Encerrar chamada</TooltipContent>
+              <TooltipContent>Desligar Chamada</TooltipContent>
             </Tooltip>
           </div>
         </div>
 
+        {/* Auto Answer Countdown (if applicable) */}
         {call.status === "ringing" &&
           call.direction === "inbound" &&
           aiConfig?.autoAnswer &&
@@ -229,44 +269,46 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
               const remaining = Math.max(0, Math.ceil((call.startedAt + aiConfig.autoAnswerDelay * 1000 - Date.now()) / 1000));
               if (remaining <= 0) return null;
               return (
-                <div className="rounded-md bg-warning/10 px-3 py-1.5 border border-warning/20 text-xs text-warning-text font-medium animate-pulse flex items-center justify-between">
-                  <span>A IA atenderá automaticamente em:</span>
-                  <span className="font-bold text-sm tabular-nums">{remaining}s</span>
+                <div className="rounded-xl bg-amber-500/10 px-3.5 py-2 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300 font-semibold animate-pulse flex items-center justify-between">
+                  <span>Atendimento automático IA em:</span>
+                  <span className="font-extrabold text-sm tabular-nums">{remaining}s</span>
                 </div>
               );
             })()
           )}
 
-        <div className="space-y-2">
-          <Meter label="Mic" db={micDb} />
-          <Meter label="Peer" db={peerDb} />
+        {/* Audio VU Meters (Mic & Peer) */}
+        <div className="flex items-center gap-4 rounded-xl border bg-muted/20 p-3">
+          <AudioMeterBar label="Microfone / IA" icon={Mic} db={micDb} />
+          <div className="h-6 w-px bg-border shrink-0" />
+          <AudioMeterBar label="Áudio Cliente" icon={Volume2} db={peerDb} />
         </div>
 
-        {/* Real-time transcription */}
+        {/* Real-time Transcript Snippet Box */}
         {transcripts.length > 0 && (
-          <div className="border-t pt-4 space-y-3 max-h-48 overflow-y-auto bg-muted/10 p-3 rounded-xl border border-primary/5 custom-scrollbar animate-fade-in">
-            <p className="font-semibold text-xs text-muted-foreground mb-2 flex items-center gap-1.5 px-1">
-              <Sparkles className="h-3.5 w-3.5 text-primary fill-primary/10" />
-              <span>Conversa em tempo real</span>
+          <div ref={transcriptContainerRef} className="rounded-xl border bg-muted/20 p-3 space-y-2.5 max-h-48 overflow-y-auto custom-scrollbar animate-fade-in">
+            <p className="font-bold text-[11px] text-muted-foreground flex items-center gap-1.5 uppercase tracking-wider">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              <span>Transcrição ao Vivo</span>
             </p>
-            <div className="space-y-3">
+            <div className="space-y-2">
               {transcripts.map((line, idx) => (
-                <div 
-                  key={idx} 
+                <div
+                  key={idx}
                   className={cn(
                     "flex flex-col gap-1 w-full animate-fade-in-fast",
-                    line.speaker === "ai" ? "items-end" : "items-start"
+                    line.speaker === "ai" ? "items-end" : "items-start",
                   )}
                 >
-                  <span className="text-[9px] font-semibold text-muted-foreground/80 tracking-wider uppercase px-1.5">
+                  <span className="text-[9px] font-extrabold text-muted-foreground uppercase px-1">
                     {line.speaker === "ai" ? "IA" : "Cliente"}
                   </span>
-                  <div 
+                  <div
                     className={cn(
-                      "rounded-2xl px-3 py-2 text-xs shadow-sm max-w-[85%] leading-relaxed border break-words",
+                      "rounded-2xl px-3 py-2 text-xs shadow-xs max-w-[85%] leading-relaxed border break-words font-medium",
                       line.speaker === "ai"
-                        ? "bg-primary/10 text-emerald-900 dark:text-emerald-100 border-primary/20 rounded-tr-none"
-                        : "bg-card text-foreground border-border/80 rounded-tl-none"
+                        ? "bg-primary text-primary-foreground rounded-tr-none"
+                        : "bg-card text-foreground border-border rounded-tl-none",
                     )}
                   >
                     {line.text}
