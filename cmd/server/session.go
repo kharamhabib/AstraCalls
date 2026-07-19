@@ -117,7 +117,11 @@ func (s *Session) createCall(callID string) *call.CallManager {
 
 func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	callStartTime := time.Now()
-	rec, err := NewServerAudioRecorder(filepath.Join("storage", "recordings"), callID)
+	peerInfo := ""
+	if existing, _ := s.mgr.broker.getCall(callID); existing != nil {
+		peerInfo = existing.Peer
+	}
+	rec, err := NewServerAudioRecorder(filepath.Join("storage", "recordings"), callID, peerInfo)
 	if err != nil {
 		s.log.Error("falha ao criar gravador de áudio no servidor", "callId", callID, "err", err)
 	}

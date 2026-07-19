@@ -1,4 +1,4 @@
-# Registros de Atualizações e Futuras Implementações — AstraCalls (RockCall)
+# Registros de Atualizações e Futuras Implementações — Kallia (AstraCalls / RockCall)
 
 ## Concluído recentemente
 

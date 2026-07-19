@@ -50,7 +50,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
             </Sheet>
 
             <h2 className="text-base font-bold tracking-tight text-foreground">
-              {sectionTitles[activeSection] || "AstraCall"}
+              {sectionTitles[activeSection] || "Kallia"}
             </h2>
           </div>
 

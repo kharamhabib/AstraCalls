@@ -27,7 +27,7 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
             <PhoneForwarded className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-base font-bold tracking-tight text-foreground">AstraCall</h1>
+            <h1 className="text-base font-bold tracking-tight text-foreground">Kallia</h1>
             <p className="text-[11px] font-medium text-muted-foreground">PABX IA WhatsApp</p>
           </div>
         </div>

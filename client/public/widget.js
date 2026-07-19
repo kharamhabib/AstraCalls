@@ -1,7 +1,7 @@
 /*
- * WaCalls — widget de chamada para o Chatwoot.
+ * Kallia — widget de chamada para o Chatwoot.
  * Carregue no Chatwoot (super_admin > app_config > internal), no campo de scripts:
- *   <script src="https://SEU-WACALLS/widget.js" data-api-key="SUA_API_KEY"></script>
+ *   <script src="https://SEU-KALLIA/widget.js" data-api-key="SUA_API_KEY"></script>
  * Injeta um ícone de telefone ao lado do botão de excluir ticket; ao clicar,
  * abre um painel flutuante e liga para o contato via WhatsApp (WebRTC).
  *

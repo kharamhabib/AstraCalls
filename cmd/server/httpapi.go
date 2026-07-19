@@ -498,8 +498,7 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		
 		recURL := row.RecordingURL
 		if recURL == "" {
-			wavPath := filepath.Join("storage", "recordings", fmt.Sprintf("%s.wav", row.CallID))
-			if _, err := os.Stat(wavPath); err == nil {
+			if path := findRecordingPath(row.CallID); path != "" {
 				recURL = fmt.Sprintf("/api/sessions/%s/recordings/%s", sess.id, row.CallID)
 			}
 		}
@@ -1014,6 +1013,23 @@ func (s *server) withRateLimit(next http.Handler, limiters *apiLimiters) http.Ha
 	})
 }
 
+func findRecordingPath(callID string) string {
+	recordingsDir := filepath.Join("storage", "recordings")
+	exactPath := filepath.Join(recordingsDir, fmt.Sprintf("%s.wav", callID))
+	if _, err := os.Stat(exactPath); err == nil {
+		return exactPath
+	}
+	entries, err := os.ReadDir(recordingsDir)
+	if err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.Contains(entry.Name(), callID) && strings.HasSuffix(entry.Name(), ".wav") {
+				return filepath.Join(recordingsDir, entry.Name())
+			}
+		}
+	}
+	return ""
+}
+
 func (s *server) handleGetCallRecording(w http.ResponseWriter, r *http.Request) {
 	sid := r.PathValue("sid")
 	callID := r.PathValue("callId")
@@ -1021,15 +1037,14 @@ func (s *server) handleGetCallRecording(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "sid and callId required", http.StatusBadRequest)
 		return
 	}
-	recordingsDir := filepath.Join("storage", "recordings")
-	filePath := filepath.Join(recordingsDir, fmt.Sprintf("%s.wav", callID))
-
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+	filePath := findRecordingPath(callID)
+	if filePath == "" {
 		http.Error(w, "recording not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "audio/wav")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filepath.Base(filePath)))
 	http.ServeFile(w, r, filePath)
 }
 

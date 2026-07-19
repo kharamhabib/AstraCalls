@@ -75,13 +75,15 @@ export const DashboardPage = ({ sid }: { sid: string }) => {
   
   const todayCallsCount = todayHistory.length;
   
-  const answeredCalls = todayHistory.filter(
-    (r) => r.endedAt && (r.endedAt - r.startedAt) >= 3000,
-  );
+  const answeredCalls = todayHistory.filter((r) => {
+    const duration = (r.endedAt ?? r.startedAt) - r.startedAt;
+    return r.endedAt && duration >= 3000 && r.endReason !== "rejected" && r.endReason !== "no_answer" && r.endReason !== "timeout";
+  });
 
   const missedCallsCount = todayHistory.filter((r) => {
-    if (r.endReason === "rejected" || r.endReason === "no_answer" || r.endReason === "timeout") return true;
-    if (r.direction === "inbound" && (!r.endedAt || r.endedAt - r.startedAt < 3000)) return true;
+    const duration = (r.endedAt ?? r.startedAt) - r.startedAt;
+    if (r.endReason === "rejected" || r.endReason === "no_answer" || r.endReason === "timeout" || r.endReason === "canceled") return true;
+    if (!r.endedAt || duration < 3000) return true;
     return false;
   }).length;
 
@@ -166,7 +168,7 @@ export const DashboardPage = ({ sid }: { sid: string }) => {
           </div>
           <p className="text-2xl font-extrabold text-foreground">{todayCallsCount}</p>
           <p className="text-[10px] text-muted-foreground font-medium">
-            {answeredCalls.length} atendidas / {todayCallsCount - answeredCalls.length} sem reposta
+            {answeredCalls.length} atendidas / {todayCallsCount - answeredCalls.length} sem resposta
           </p>
         </div>
 
@@ -257,6 +259,30 @@ export const DashboardPage = ({ sid }: { sid: string }) => {
                 const formattedPhone = formatPhoneNumber(r.phone);
                 const displayName = r.name || formattedPhone;
 
+                const durationMs = (r.endedAt ?? r.startedAt) - r.startedAt;
+                const isMissedOrRejected =
+                  r.endReason === "rejected" ||
+                  r.endReason === "no_answer" ||
+                  r.endReason === "timeout" ||
+                  r.endReason === "canceled" ||
+                  !r.endedAt ||
+                  durationMs < 3000;
+
+                let statusBadgeText = isInbound ? "Recebida" : "Efetuada";
+                let badgeClass = isInbound
+                  ? "bg-secondary text-secondary-foreground"
+                  : "bg-primary text-primary-foreground";
+
+                if (isMissedOrRejected) {
+                  if (r.endReason === "rejected") {
+                    statusBadgeText = "Recusada";
+                    badgeClass = "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30";
+                  } else {
+                    statusBadgeText = "Não Atendida";
+                    badgeClass = "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30";
+                  }
+                }
+
                 return (
                   <div
                     key={r.callId}
@@ -285,36 +311,48 @@ export const DashboardPage = ({ sid }: { sid: string }) => {
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        <Badge variant={isInbound ? "secondary" : "default"} className="h-5 text-[10px] font-bold">
+                        <Badge className={cn("h-5 text-[10px] font-bold border", badgeClass)}>
                           <DirIcon className="h-3 w-3 mr-1" />
-                          {isInbound ? "Recebida" : "Efetuada"}
+                          {statusBadgeText}
                         </Badge>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setSelectedTranscriptRow(r)}
-                          className="h-7 text-xs gap-1 rounded-xl"
-                        >
-                          <MessageSquare className="h-3.5 w-3.5 text-primary" />
-                          <span className="hidden sm:inline">Transcrição</span>
-                        </Button>
+                        {!isMissedOrRejected && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSelectedTranscriptRow(r)}
+                            className="h-7 text-xs gap-1 rounded-xl"
+                          >
+                            <MessageSquare className="h-3.5 w-3.5 text-primary" />
+                            <span className="hidden sm:inline">Transcrição</span>
+                          </Button>
+                        )}
                       </div>
                     </div>
 
-                    {/* Resumo da IA no Card se disponível */}
-                    {r.summary && (
-                      <div className="rounded-xl bg-primary/5 p-3 text-xs text-foreground/90 border border-primary/10 whitespace-pre-wrap break-words leading-relaxed">
-                        <span className="font-extrabold text-primary block mb-1">Resumo IA:</span>
-                        {r.summary}
+                    {/* Exibe aviso de chamada recusada / não atendida se for o caso */}
+                    {isMissedOrRejected ? (
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl w-fit">
+                        <PhoneMissed className="h-3.5 w-3.5" />
+                        <span>Chamada não atendida / recusada pelo destinatário</span>
                       </div>
-                    )}
+                    ) : (
+                      <>
+                        {/* Resumo da IA no Card se atendida e disponível */}
+                        {r.summary && (
+                          <div className="rounded-xl bg-primary/5 p-3 text-xs text-foreground/90 border border-primary/10 whitespace-pre-wrap break-words leading-relaxed">
+                            <span className="font-extrabold text-primary block mb-1">Resumo IA:</span>
+                            {r.summary}
+                          </div>
+                        )}
 
-                    {/* Audio Player do Servidor se gravado */}
-                    {r.recordingUrl && (
-                      <div className="pt-1">
-                        <AudioRecordingPlayer recordingUrl={r.recordingUrl} />
-                      </div>
+                        {/* Audio Player do Servidor se gravado */}
+                        {r.recordingUrl && (
+                          <div className="pt-1">
+                            <AudioRecordingPlayer recordingUrl={r.recordingUrl} />
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 );

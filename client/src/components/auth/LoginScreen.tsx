@@ -51,7 +51,7 @@ export const LoginScreen = ({ onSuccess }: { onSuccess: () => void }) => {
               <PhoneCall className="h-7 w-7" />
             </span>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">RockCall</h1>
+              <h1 className="text-2xl font-bold tracking-tight">Kallia</h1>
               <p className="text-sm text-muted-foreground mt-1">
                 Acesse com a URL do servidor e sua API key
               </p>

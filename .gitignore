@@ -37,6 +37,14 @@ Thumbs.db
 !native/
 !native/*.dll
 
+# Gravações de áudio e armazenamento de mídias locais (Não versionar)
+/storage/
+/storage/recordings/
+*.wav
+*.mp3
+*.ogg
+*.opus
+
 # AstraCalls: artefatos de build/bancada (não versionar)
 *.log
 /wacalls

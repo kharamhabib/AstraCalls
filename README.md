@@ -1,38 +1,29 @@
 <div align="center">
 
-# 📞 AstraCalls
+# 📞 Kallia
 
-**Chamadas de voz do WhatsApp em Go puro, direto do navegador — agora prontas para produção SaaS.**
+**Plataforma PABX VoIP profissional para WhatsApp com agentes de IA em Go puro, direto do navegador — pronta para produção SaaS.**
 
-Mídia VoIP nativa, multi-conta (multi-sessão), API de mensagens, webhooks, integração com **Chatwoot** e deploy em **Docker Swarm + Traefik**.
+Mídia VoIP nativa, multi-conta (multi-sessão), IA de voz Gemini Live, gravação de áudio dual-channel, API de mensagens, webhooks, integração com **Chatwoot** e deploy containerizado (Coolify / Docker Swarm).
 
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
 [![whatsmeow](https://img.shields.io/badge/whatsmeow-VoIP-25D366?logo=whatsapp&logoColor=white)](https://github.com/tulir/whatsmeow)
 [![pion](https://img.shields.io/badge/pion-WebRTC-FF6B6B)](https://github.com/pion/webrtc)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org)
-[![Docker](https://img.shields.io/badge/Docker-Swarm-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/engine/swarm/)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](#-licença)
-
-[Visão Geral](#-visão-geral) · [Novidades](#-o-que-o-astracalls-adiciona) · [Arquitetura](#-arquitetura) · [Início Rápido](#-início-rápido) · [Deploy](#-deploy-em-produção-docker-swarm--traefik) · [API](#-api) · [Suporte](#️-suporte-profissional)
 
 </div>
 
 ---
 
-> **AstraCalls** é um fork de produção do [**WaCalls**](https://github.com/JotaDev66/WaCalls)
-> (de [@jotadev66](https://github.com/jotadev66)). Mantém todo o núcleo VoIP nativo em Go e
-> adiciona a camada que faltava para operar como serviço: **PostgreSQL por sessão**,
-> **API de mensagens**, **webhooks**, **integração nativa com Chatwoot** (inclusive um
-> **widget de chamada dentro do Chatwoot**), **autenticação por API key** e **deploy
-> containerizado em Docker Swarm com Traefik/HTTPS**. Todos os créditos do projeto original
-> estão preservados em [Colaboradores](#-colaboradores).
+> **Kallia** é uma plataforma PABX VoIP desenvolvida a partir de evoluções dos projetos originários **AstraCalls** / **RockCall** e [**WaCalls**](https://github.com/JotaDev66/WaCalls) (de [@jotadev66](https://github.com/jotadev66)). Mantém todo o núcleo VoIP nativo em Go e adiciona atendimento autônomo por IA Gemini Live, gravação de chamadas no servidor, **PostgreSQL por sessão**, **API de mensagens**, **webhooks**, **integração nativa com Chatwoot** e **deploy em Docker / Coolify**. Todos os créditos dos projetos originários estão preservados em [Colaboradores](#-colaboradores).
 
 ---
 
 ## 📋 Visão Geral
 
-O AstraCalls pareia uma ou mais contas do WhatsApp via **QR code** e permite **fazer e
+O **Kallia** pareia uma ou mais contas do WhatsApp via **QR code** e permite **fazer e
 receber chamadas de voz 1:1** de qualquer navegador. O microfone do navegador é enviado
 por **WebRTC (Opus)** para o servidor Go, que transcodifica para o codec **MLow** da Meta
 e injeta a mídia na malha de **relay SRTP** do WhatsApp — e o caminho inverso traz o áudio
@@ -56,9 +47,9 @@ por call ID.
 
 ---
 
-## 🚀 O que o AstraCalls adiciona
+## 🚀 Recursos e Funcionalidades do Kallia
 
-Tudo abaixo foi construído **por cima** do WaCalls original, sem quebrar o núcleo VoIP:
+Tudo abaixo foi construído como solução completa PABX VoIP com IA de voz:
 
 ### 🗄️ Persistência em PostgreSQL (1 banco por sessão)
 Saímos do SQLite único para um modelo no estilo **WAHA**: um banco **principal**
@@ -332,7 +323,7 @@ cd client && npm run build    # type-check + build de produção do cliente
 
 ## 👥 Colaboradores
 
-O AstraCalls é construído sobre o excelente trabalho da equipe do **WaCalls**. Todos os
+O **Kallia** é construído sobre o excelente trabalho da comunidade e dos desenvolvedores originários do **WaCalls**. Todos os
 créditos do projeto original:
 
 <div align="center">
@@ -380,13 +371,13 @@ Precisa de ajuda para melhorar, customizar ou implementar o projeto?
 
 ## 📄 Licença
 
-O AstraCalls é distribuído sob a licença **GNU AGPL-3.0** — veja [LICENSE](./LICENSE).
+O Kallia é distribuído sob a licença **GNU AGPL-3.0** — veja [LICENSE](./LICENSE).
 
 Isso significa que qualquer uso em rede (inclusive SaaS) exige disponibilizar o
 código-fonte das modificações aos usuários do serviço.
 
-O AstraCalls é um fork do [WaCalls](https://github.com/JotaDev66/WaCalls), que é
-licenciado sob **MIT**. Conforme exigido pela MIT, o aviso de copyright original
+O Kallia é fruto de evolução derivado dos projetos originários AstraCalls, RockCall e [WaCalls](https://github.com/JotaDev66/WaCalls), que são
+licenciados sob **MIT**. Conforme exigido pela MIT, o aviso de copyright original
 (© 2026 jotadev66) é preservado em [LICENSE.WaCalls](./LICENSE.WaCalls). As porções
 originais permanecem sob os termos MIT; o trabalho derivado, como um todo, é
 licenciado sob AGPL-3.0.

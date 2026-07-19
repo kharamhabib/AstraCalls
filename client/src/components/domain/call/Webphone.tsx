@@ -90,7 +90,7 @@ export const Webphone = ({ sid }: { sid: string }) => {
       <div className="text-center space-y-1">
         <div className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
           <Bot className="h-3.5 w-3.5" />
-          <span>Softphone AstraCall</span>
+          <span>Softphone Kallia</span>
         </div>
         <h3 className="text-lg font-extrabold tracking-tight">Discador Webphone</h3>
       </div>

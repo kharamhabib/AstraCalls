@@ -1,6 +1,6 @@
-# Arquitetura do Sistema: RockCall
+# Arquitetura do Sistema: Kallia
 
-O **RockCall** (anteriormente WaCalls) é uma plataforma VoIP profissional baseada em WhatsApp que permite realizar e receber chamadas de voz diretamente pelo navegador. O sistema suporta dois modos de operação para a **API Gemini Live** (Google), permitindo que agentes de voz inteligentes (IA) atendam ou façam ligações automáticas de forma natural:
+O **Kallia** (plataforma PABX VoIP desenvolvida a partir de evoluções dos projetos originários **AstraCalls** / **RockCall** e **WaCalls**) é uma solução profissional de atendimento e inteligência de voz baseada em WhatsApp que permite realizar e receber chamadas de voz diretamente pelo navegador e automatizar atendimentos com IA. O sistema suporta dois modos de operação para a **API Gemini Live** (Google), permitindo que agentes de voz inteligentes (IA) atendam ou façam ligações automáticas de forma natural:
 
 1. **Client-Side (Híbrida/Legada)**: O áudio é roteado através do navegador do operador, que gerencia a conexão WebSocket com a IA.
 2. **Server-Side (Autônoma/Nova)**: O servidor Go gerencia tudo diretamente em background (WebSocket + CGO Opus + Pipeline de Áudio), sem necessidade de manter abas de navegador abertas.
@@ -47,6 +47,7 @@ O sistema é dividido em duas partes fundamentais:
 * **Linguagem**: Go (Golang)
 * **Banco de Dados**: PostgreSQL (armazenamento de credenciais de pareamento, logs de chamadas e configurações da IA)
 * **Processamento de Mídia**: CGO com wrapping de codecs Opus nativos (`opus_mlow` do WhatsApp)
+* **Gravação de Áudio Dual-Channel**: Gravação e mixagem estocástica em tempo real dos dois canais de áudio (Cliente + IA) salvas em `storage/recordings/YYYYMMDD_HHMMSS_Contato_CallID.wav`.
 * **Protocolo**: Sinalização de VoIP via nós binários do WhatsApp e transporte de mídia UDP (SRTP) intermediado por WebRTC.
 * **Comunicação Gemini**: WebSocket bidirecional nativo (`github.com/gorilla/websocket`) para comunicação direta com a API Gemini Live.
 

@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
+	"time"
 )
 
 type ServerAudioRecorder struct {
@@ -22,11 +25,25 @@ type ServerAudioRecorder struct {
 	mixBuf  []float32
 }
 
-func NewServerAudioRecorder(recordingsDir, callID string) (*ServerAudioRecorder, error) {
+func sanitizeFilename(s string) string {
+	reg := regexp.MustCompile(`[^a-zA-Z0-9_\-]+`)
+	cleaned := reg.ReplaceAllString(s, "_")
+	return strings.Trim(cleaned, "_")
+}
+
+func NewServerAudioRecorder(recordingsDir, callID, peerInfo string) (*ServerAudioRecorder, error) {
 	if err := os.MkdirAll(recordingsDir, 0755); err != nil {
 		return nil, err
 	}
-	filePath := filepath.Join(recordingsDir, fmt.Sprintf("%s.wav", callID))
+
+	nowStr := time.Now().Format("20060102_150405")
+	cleanPeer := sanitizeFilename(peerInfo)
+	if cleanPeer == "" {
+		cleanPeer = "chamada"
+	}
+
+	fileName := fmt.Sprintf("%s_%s_%s.wav", nowStr, cleanPeer, callID)
+	filePath := filepath.Join(recordingsDir, fileName)
 	f, err := os.Create(filePath)
 	if err != nil {
 		return nil, err
