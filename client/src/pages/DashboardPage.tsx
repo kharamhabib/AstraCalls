@@ -25,7 +25,7 @@ import { AudioRecordingPlayer } from "@/components/domain/history/AudioRecording
 import { TranscriptModal } from "@/components/domain/history/TranscriptModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatPhoneNumber, isCallMissedOrRejected, isCallAnswered } from "@/utils/format";
+import { formatPhoneNumber, isCallMissedOrRejected, isCallAnswered, getCallStatusDetails } from "@/utils/format";
 import { cn } from "@/lib/utils";
 
 function formatDurationSecs(secs: number): string {
@@ -267,22 +267,7 @@ export const DashboardPage = ({ sid }: { sid: string }) => {
                 const formattedPhone = formatPhoneNumber(r.phone);
                 const displayName = r.name || formattedPhone;
 
-                const isMissedOrRejected = isCallMissedOrRejected(r.startedAt, r.endedAt, r.endReason);
-
-                let statusBadgeText = isInbound ? "Recebida" : "Efetuada";
-                let badgeClass = isInbound
-                  ? "bg-secondary text-secondary-foreground"
-                  : "bg-primary text-primary-foreground";
-
-                if (isMissedOrRejected) {
-                  if (r.endReason === "rejected") {
-                    statusBadgeText = "Recusada";
-                    badgeClass = "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30";
-                  } else {
-                    statusBadgeText = "Não Atendida";
-                    badgeClass = "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30";
-                  }
-                }
+                const statusDetails = getCallStatusDetails(r.startedAt, r.endedAt, r.endReason, r.direction);
 
                 return (
                   <div
@@ -312,12 +297,12 @@ export const DashboardPage = ({ sid }: { sid: string }) => {
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        <Badge className={cn("h-5 text-[10px] font-bold border", badgeClass)}>
+                        <Badge className={cn("h-5 text-[10px] font-bold border", statusDetails.badgeClass)}>
                           <DirIcon className="h-3 w-3 mr-1" />
-                          {statusBadgeText}
+                          {statusDetails.badgeText}
                         </Badge>
 
-                        {!isMissedOrRejected && (
+                        {statusDetails.showMedia && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -331,11 +316,11 @@ export const DashboardPage = ({ sid }: { sid: string }) => {
                       </div>
                     </div>
 
-                    {/* Exibe aviso de chamada recusada / não atendida se for o caso */}
-                    {isMissedOrRejected ? (
-                      <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl w-fit">
+                    {/* Exibe aviso explicativo se a chamada foi recusada, não atendida ou atendida em outro aparelho */}
+                    {statusDetails.statusType !== "completed" ? (
+                      <div className={cn("flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl w-fit border", statusDetails.badgeClass)}>
                         <PhoneMissed className="h-3.5 w-3.5" />
-                        <span>Chamada não atendida / recusada pelo destinatário</span>
+                        <span>{statusDetails.descriptionText}</span>
                       </div>
                     ) : (
                       <>

@@ -13,7 +13,6 @@ export const formatPhoneNumber = (value?: string | null): string => {
   if (!cleaned) return value;
 
   // Se o número for muito longo (>13 dígitos), é provavelmente um LID não resolvido.
-  // Evitamos formatar como DDI/DDD padrão e apenas exibimos limpo.
   if (cleaned.length > 13) {
     return value.includes("@lid") ? user : `+${cleaned}`;
   }
@@ -49,12 +48,87 @@ export const getInitials = (name: string): string => {
 
 export const isCallMissedOrRejected = (startedAt: number, endedAt: number | null, endReason?: string | null): boolean => {
   if (!endedAt) return true;
+  if (endReason === "accepted_elsewhere") return true;
+  if (endReason === "rejected" || endReason === "no_answer" || endReason === "timeout" || endReason === "canceled") return true;
   const duration = endedAt - startedAt;
   if (duration < 3000) return true;
-  if (endReason === "rejected" || endReason === "no_answer" || endReason === "timeout" || endReason === "canceled") return true;
   return false;
 };
 
 export const isCallAnswered = (startedAt: number, endedAt: number | null, endReason?: string | null): boolean => {
   return !isCallMissedOrRejected(startedAt, endedAt, endReason);
+};
+
+export interface CallStatusDetails {
+  statusType: "accepted_elsewhere" | "rejected" | "missed" | "completed";
+  badgeText: string;
+  badgeClass: string;
+  cardBorderClass: string;
+  descriptionText: string;
+  showMedia: boolean;
+}
+
+export const getCallStatusDetails = (
+  startedAt: number,
+  endedAt: number | null,
+  endReason?: string | null,
+  direction?: string | null
+): CallStatusDetails => {
+  const isInbound = direction === "inbound";
+  const duration = endedAt ? endedAt - startedAt : 0;
+  const isAcceptedElsewhere = endReason === "accepted_elsewhere";
+  const isRejected = endReason === "rejected";
+  const isMissed = !endedAt || duration < 3000 || endReason === "no_answer" || endReason === "timeout" || endReason === "canceled";
+
+  if (isAcceptedElsewhere) {
+    return {
+      statusType: "accepted_elsewhere",
+      badgeText: isInbound ? "Recebida (Outro aparelho)" : "Efetuada (Outro aparelho)",
+      badgeClass: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
+      cardBorderClass: "border-blue-500/20 bg-blue-500/[0.02] hover:border-blue-500/30",
+      descriptionText: isInbound
+        ? "Chamada recebida — Atendida em outro dispositivo"
+        : "Chamada efetuada — Atendida em outro dispositivo",
+      showMedia: false,
+    };
+  }
+
+  if (isRejected) {
+    return {
+      statusType: "rejected",
+      badgeText: isInbound ? "Recebida (Recusada)" : "Efetuada (Recusada)",
+      badgeClass: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+      cardBorderClass: "border-red-500/20 bg-red-500/[0.02] hover:border-red-500/30",
+      descriptionText: isInbound
+        ? "Chamada recebida — Você recusou a ligação"
+        : "Chamada efetuada — O contato recusou a ligação",
+      showMedia: false,
+    };
+  }
+
+  if (isMissed) {
+    return {
+      statusType: "missed",
+      badgeText: isInbound ? "Recebida (Não atendida)" : "Efetuada (Não atendida)",
+      badgeClass: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+      cardBorderClass: "border-amber-500/20 bg-amber-500/[0.02] hover:border-amber-500/30",
+      descriptionText: isInbound
+        ? "Chamada recebida não atendida (Perdida)"
+        : "Chamada efetuada não atendida (Sem resposta)",
+      showMedia: false,
+    };
+  }
+
+  return {
+    statusType: "completed",
+    badgeText: isInbound ? "Recebida (Atendida)" : "Efetuada (Atendida)",
+    badgeClass: isInbound
+      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+      : "bg-primary/10 text-primary border-primary/20",
+    cardBorderClass: "border-primary/10 bg-card hover:shadow-xs",
+    descriptionText: isInbound
+      ? "Chamada recebida e atendida"
+      : "Chamada efetuada e atendida",
+    showMedia: true,
+  };
 };

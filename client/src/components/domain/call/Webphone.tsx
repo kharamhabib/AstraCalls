@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Phone, Delete, Bot, Mic, MicOff, PhoneOff, Sparkles } from "lucide-react";
+import { Phone, Delete, Mic, MicOff, PhoneOff, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { startCall, endCall } from "@/services/calls";
@@ -9,24 +9,56 @@ import { useContactInfo } from "@/hooks/useContactInfo";
 import { formatPhoneNumber } from "@/utils/format";
 import { cn } from "@/lib/utils";
 
-const dialpadKeys = [
-  { key: "1", sub: "" },
-  { key: "2", sub: "ABC" },
-  { key: "3", sub: "DEF" },
-  { key: "4", sub: "GHI" },
-  { key: "5", sub: "JKL" },
-  { key: "6", sub: "MNO" },
-  { key: "7", sub: "PQRS" },
-  { key: "8", sub: "TUV" },
-  { key: "9", sub: "WXYZ" },
-  { key: "*", sub: "" },
-  { key: "0", sub: "+" },
-  { key: "#", sub: "" },
+export const ddiOptions = [
+  { code: "55", flag: "🇧🇷", label: "+55 BR" },
+  { code: "1", flag: "🇺🇸", label: "+1 US/CA" },
+  { code: "351", flag: "🇵🇹", label: "+351 PT" },
+  { code: "54", flag: "🇦🇷", label: "+54 AR" },
+  { code: "52", flag: "🇲🇽", label: "+52 MX" },
+  { code: "34", flag: "🇪🇸", label: "+34 ES" },
+  { code: "44", flag: "🇬🇧", label: "+44 UK" },
 ];
 
-export const Webphone = ({ sid }: { sid: string }) => {
+export const formatPhoneInput = (val: string, ddi = "55"): string => {
+  let digits = val.replace(/\D/g, "");
+  if (!digits) return "";
+
+  // Se o usuário colou com DDI +55 (12 ou 13 dígitos), removemos o 55 inicial para formatar (DDD) NÚMERO
+  if (ddi === "55" && digits.startsWith("55") && digits.length >= 12) {
+    digits = digits.slice(2);
+  }
+
+  if (digits.length <= 2) {
+    return `(${digits}`;
+  }
+  if (digits.length <= 6) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  }
+  if (digits.length <= 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  }
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`;
+};
+
+export const normalizePhoneWithDDI = (ddi: string, phoneInput: string): string => {
+  const digitsOnly = phoneInput.replace(/\D/g, "");
+  if (!digitsOnly) return "";
+  const ddiDigits = ddi.replace(/\D/g, "");
+  if (ddiDigits && digitsOnly.startsWith(ddiDigits) && digitsOnly.length > ddiDigits.length + 8) {
+    return digitsOnly;
+  }
+  return `${ddiDigits}${digitsOnly}`;
+};
+
+interface WebphoneProps {
+  sid: string;
+  useAI?: boolean;
+  prompt?: string;
+}
+
+export const Webphone = ({ sid, useAI = true, prompt = "" }: WebphoneProps) => {
+  const [ddi, setDdi] = useState("55");
   const [phone, setPhone] = useState("");
-  const [useAI, setUseAI] = useState(true);
   const [loading, setLoading] = useState(false);
   const [muted, setMuted] = useState(false);
 
@@ -34,6 +66,7 @@ export const Webphone = ({ sid }: { sid: string }) => {
   const activeCall = calls.find((c) => c.sessionId === sid && c.status !== "ended");
   const isAgentActive = activeCall ? useAIAgents.getState().activeAgentCalls.has(activeCall.callId) : false;
   const transcript = activeCall ? useAIAgents.getState().transcripts[activeCall.callId] || [] : [];
+  const activeCustomPrompt = activeCall ? useAIAgents.getState().customPrompts[activeCall.callId] : null;
   const transcriptRef = useRef<HTMLDivElement>(null);
 
   const { data: contact } = useContactInfo(sid, activeCall?.peer);
@@ -49,24 +82,39 @@ export const Webphone = ({ sid }: { sid: string }) => {
   }, [transcript]);
 
   const handleKeyPress = (digit: string) => {
-    if (phone.length < 20) {
-      setPhone((prev) => prev + digit);
+    const raw = phone.replace(/\D/g, "");
+    if (raw.length < 11) {
+      setPhone(formatPhoneInput(raw + digit, ddi));
     }
   };
 
   const handleBackspace = () => {
-    setPhone((prev) => prev.slice(0, -1));
+    const raw = phone.replace(/\D/g, "");
+    setPhone(formatPhoneInput(raw.slice(0, -1), ddi));
   };
 
   const handleCall = async () => {
     if (!phone.trim()) {
-      toast.error("Informe um número de telefone.");
+      toast.error("Informe o número de telefone.");
       return;
     }
+
+    const fullPhone = normalizePhoneWithDDI(ddi, phone);
+    if (!fullPhone || fullPhone.length < 8) {
+      toast.error("Número de telefone inválido.");
+      return;
+    }
+
     setLoading(true);
     try {
-      await startCall(sid, phone, true, useAI);
-      toast.success("Iniciando chamada...");
+      await startCall(
+        sid,
+        fullPhone,
+        true,
+        useAI,
+        prompt.trim() || undefined
+      );
+      toast.success(`Iniciando chamada para +${fullPhone}...`);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -84,15 +132,22 @@ export const Webphone = ({ sid }: { sid: string }) => {
     }
   };
 
+  // Teclado numérico limpo (0-9)
+  const numericKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
   return (
-    <div className="mx-auto max-w-sm rounded-3xl border bg-card p-6 shadow-xl space-y-5 animate-fade-in">
-      {/* Phone Header / Status Bar */}
-      <div className="text-center space-y-1">
-        <div className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
-          <Bot className="h-3.5 w-3.5" />
-          <span>Softphone Kallia</span>
+    <div className="rounded-3xl border bg-card p-6 shadow-xl space-y-5 animate-fade-in transition-all">
+      {/* Phone Header */}
+      <div className="flex items-center justify-between border-b pb-3">
+        <div className="flex items-center gap-2">
+          <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-primary/10 text-primary font-bold">
+            <Phone className="h-4.5 w-4.5" />
+          </div>
+          <div>
+            <h3 className="text-base font-extrabold tracking-tight text-foreground">Discador Webphone</h3>
+            <p className="text-[11px] text-muted-foreground font-medium">Ligue diretamente para qualquer contato</p>
+          </div>
         </div>
-        <h3 className="text-lg font-extrabold tracking-tight">Discador Webphone</h3>
       </div>
 
       {/* Active Call Card Overlay */}
@@ -102,8 +157,8 @@ export const Webphone = ({ sid }: { sid: string }) => {
             <Phone className="h-7 w-7" />
           </div>
           <div>
-            <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Chamada Em Andamento</p>
-            <h4 className="text-lg font-bold truncate px-2" title={displayName}>
+            <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400">Chamada Em Andamento</p>
+            <h4 className="text-lg font-extrabold truncate px-2 text-foreground" title={displayName}>
               {displayName}
             </h4>
             {hasContactName && (
@@ -115,6 +170,11 @@ export const Webphone = ({ sid }: { sid: string }) => {
                 {isAgentActive ? "Atendimento por IA (Gemini Live)" : "Atendimento Manual"}
               </span>
             </div>
+            {activeCustomPrompt && (
+              <p className="text-[10px] text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 mt-2 truncate font-medium">
+                💡 {activeCustomPrompt}
+              </p>
+            )}
           </div>
 
           {/* Transcript Snippet */}
@@ -137,8 +197,8 @@ export const Webphone = ({ sid }: { sid: string }) => {
               variant="outline"
               size="icon"
               onClick={() => setMuted(!muted)}
-              className={cn("h-11 w-11 rounded-full", muted && "bg-amber-500/15 text-amber-500 border-amber-500/30")}
-              title={muted ? "Desmutar" : "Mutar"}
+              className={cn("h-11 w-11 rounded-full transition-all", muted && "bg-amber-500/15 text-amber-500 border-amber-500/30")}
+              title={muted ? "Desmutar" : "Mutar Mic"}
             >
               {muted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
             </Button>
@@ -147,7 +207,7 @@ export const Webphone = ({ sid }: { sid: string }) => {
               variant="destructive"
               size="icon"
               onClick={handleHangup}
-              className="h-12 w-12 rounded-full shadow-md"
+              className="h-12 w-12 rounded-full shadow-md hover:scale-105 transition-all"
               title="Desligar"
             >
               <PhoneOff className="h-6 w-6" />
@@ -156,68 +216,106 @@ export const Webphone = ({ sid }: { sid: string }) => {
         </div>
       ) : (
         <>
-          {/* Display Field */}
-          <div className="relative flex items-center justify-between rounded-2xl border bg-muted/40 px-4 py-3">
-            <input
-              type="text"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="Digite o número..."
-              className="w-full bg-transparent text-xl font-bold tracking-wider text-center focus:outline-none placeholder:text-muted-foreground/40 placeholder:font-normal placeholder:text-sm"
-            />
-            {phone && (
-              <button
-                onClick={handleBackspace}
-                className="text-muted-foreground hover:text-foreground transition-colors p-1"
-                title="Apagar digitado"
-              >
-                <Delete className="h-5 w-5" />
-              </button>
-            )}
+          {/* Display Field com Seletor de DDI */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-bold text-muted-foreground flex items-center gap-1">
+              <Globe className="h-3 w-3 text-primary" />
+              <span>Número de Telefone:</span>
+            </label>
+
+            <div className="flex items-center rounded-2xl border bg-muted/30 focus-within:bg-background focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all p-1.5 gap-2">
+              {/* Seletor de DDI */}
+              <div className="relative flex items-center shrink-0 border-r pr-2 border-border/60">
+                <select
+                  value={ddi}
+                  onChange={(e) => {
+                    const newDdi = e.target.value;
+                    setDdi(newDdi);
+                    if (phone) setPhone(formatPhoneInput(phone, newDdi));
+                  }}
+                  className="bg-transparent font-mono text-xs font-bold text-foreground cursor-pointer focus:outline-none pr-1 pl-1"
+                >
+                  {ddiOptions.map((opt) => (
+                    <option key={opt.code} value={opt.code} className="bg-card text-foreground font-mono">
+                      {opt.flag} +{opt.code}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Input Numérico com Formatação de Telefone */}
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(formatPhoneInput(e.target.value, ddi))}
+                placeholder="Ex: (11) 99YYY-XXXX"
+                className="w-full bg-transparent text-lg font-bold tracking-wider text-foreground focus:outline-none placeholder:text-muted-foreground/40 placeholder:font-normal placeholder:text-xs font-mono"
+              />
+
+              {phone && (
+                <button
+                  type="button"
+                  onClick={handleBackspace}
+                  className="text-muted-foreground hover:text-foreground transition-colors p-1 shrink-0"
+                  title="Apagar dígito"
+                >
+                  <Delete className="h-5 w-5" />
+                </button>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground font-medium pl-1">
+              O DDI <span className="font-bold text-primary font-mono">+{ddi}</span> será incluído automaticamente ao ligar.
+            </p>
           </div>
 
-          {/* AI Mode Selector Pill */}
-          <div className="flex items-center justify-between rounded-xl border bg-muted/30 p-2 text-xs">
-            <span className="font-semibold text-muted-foreground flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-              <span>Modo Atendimento IA</span>
-            </span>
+          {/* Teclado Numérico Limpo 0-9 */}
+          <div className="grid grid-cols-3 gap-2.5 pt-1">
+            {numericKeys.map((num) => (
+              <button
+                key={num}
+                type="button"
+                onClick={() => handleKeyPress(num)}
+                className="flex h-12 items-center justify-center rounded-2xl border bg-card hover:bg-muted/60 active:scale-95 transition-all text-lg font-extrabold text-foreground shadow-2xs"
+              >
+                {num}
+              </button>
+            ))}
+
+            {/* Linha inferior: Limpar, 0 e Backspace */}
             <button
               type="button"
-              onClick={() => setUseAI(!useAI)}
-              className={cn(
-                "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out",
-                useAI ? "bg-primary" : "bg-muted-foreground/30",
-              )}
+              onClick={() => setPhone("")}
+              disabled={!phone}
+              className="flex h-12 items-center justify-center rounded-2xl border bg-card hover:bg-muted/60 active:scale-95 transition-all text-xs font-bold text-muted-foreground disabled:opacity-40"
+              title="Limpar tudo"
             >
-              <span
-                className={cn(
-                  "pointer-events-none inline-block h-4 w-4 transform rounded-full bg-background shadow-lg ring-0 transition duration-200 ease-in-out",
-                  useAI ? "translate-x-4" : "translate-x-0",
-                )}
-              />
+              C
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleKeyPress("0")}
+              className="flex h-12 items-center justify-center rounded-2xl border bg-card hover:bg-muted/60 active:scale-95 transition-all text-lg font-extrabold text-foreground shadow-2xs"
+            >
+              0
+            </button>
+
+            <button
+              type="button"
+              onClick={handleBackspace}
+              disabled={!phone}
+              className="flex h-12 items-center justify-center rounded-2xl border bg-card hover:bg-muted/60 active:scale-95 transition-all text-muted-foreground disabled:opacity-40"
+              title="Apagar último dígito"
+            >
+              <Delete className="h-5 w-5" />
             </button>
           </div>
 
-          {/* Dialpad Keys (3x4 Grid) */}
-          <div className="grid grid-cols-3 gap-3">
-            {dialpadKeys.map((item) => (
-              <button
-                key={item.key}
-                onClick={() => handleKeyPress(item.key)}
-                className="flex h-14 flex-col items-center justify-center rounded-2xl border bg-card hover:bg-muted/60 active:scale-95 transition-all shadow-xs"
-              >
-                <span className="text-xl font-bold">{item.key}</span>
-                {item.sub && <span className="text-[9px] font-semibold text-muted-foreground/60 tracking-wider">{item.sub}</span>}
-              </button>
-            ))}
-          </div>
-
-          {/* Call Action Button */}
+          {/* Botão de Ligar */}
           <Button
             onClick={handleCall}
             disabled={loading || !phone}
-            className="w-full h-12 rounded-2xl gap-2 text-base font-bold shadow-md bg-emerald-500 hover:bg-emerald-600 text-white"
+            className="w-full h-12 rounded-2xl gap-2 text-base font-bold shadow-md bg-emerald-500 hover:bg-emerald-600 text-white transition-all active:scale-[0.98]"
           >
             <Phone className="h-5 w-5" />
             <span>{useAI ? "Ligar com IA" : "Ligar Manual"}</span>

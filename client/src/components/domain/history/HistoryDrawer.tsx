@@ -16,7 +16,7 @@ import { TranscriptModal } from "./TranscriptModal";
 import { SummaryModal } from "./SummaryModal";
 import { deleteHistoryCall } from "@/services/history";
 import type { HistoryRow } from "@/types/history";
-import { formatDuration, getInitials, formatPhoneNumber, isCallMissedOrRejected } from "@/utils/format";
+import { formatDuration, getInitials, formatPhoneNumber, getCallStatusDetails } from "@/utils/format";
 
 export const HistoryItem = ({ sid, row }: { sid: string; row: HistoryRow }) => {
   const [showTranscriptModal, setShowTranscriptModal] = useState(false);
@@ -33,23 +33,7 @@ export const HistoryItem = ({ sid, row }: { sid: string; row: HistoryRow }) => {
   const hasContactName = (row.name || contact?.name) && (row.name || contact?.name) !== row.phone;
   const pictureUrl = contact?.pictureUrl;
 
-  const isMissedOrRejected = isCallMissedOrRejected(row.startedAt, row.endedAt, row.endReason);
-
-  // Deixa em cima somente se foi Recebida ou Efetuada
-  const statusBadgeText = isInbound ? "Recebida" : "Efetuada";
-  const badgeClass = isInbound ? "bg-secondary/80 text-secondary-foreground border-secondary/30" : "bg-primary/10 text-primary border-primary/20";
-
-  // Estilização do card baseado no status (cor sutil premium nas bordas/fundo)
-  let cardBorderClass = "border-primary/10 bg-card hover:shadow-xs";
-  if (row.endReason === "accepted_elsewhere") {
-    cardBorderClass = "border-blue-500/20 bg-blue-500/[0.02] hover:border-blue-500/30 hover:shadow-[0_0_8px_rgba(59,130,246,0.05)]";
-  } else if (isMissedOrRejected) {
-    if (row.endReason === "rejected") {
-      cardBorderClass = "border-red-500/20 bg-red-500/[0.02] hover:border-red-500/30 hover:shadow-[0_0_8px_rgba(239,68,68,0.05)]";
-    } else {
-      cardBorderClass = "border-amber-500/20 bg-amber-500/[0.02] hover:border-amber-500/30 hover:shadow-[0_0_8px_rgba(245,158,11,0.05)]";
-    }
-  }
+  const statusDetails = getCallStatusDetails(row.startedAt, row.endedAt, row.endReason, row.direction);
 
   const handleDelete = async () => {
     setIsDeleting(true);
@@ -67,7 +51,7 @@ export const HistoryItem = ({ sid, row }: { sid: string; row: HistoryRow }) => {
 
   return (
     <>
-      <li className={`flex flex-col justify-between h-full rounded-lg border p-3.5 transition-all duration-300 animate-fade-in ${cardBorderClass}`}>
+      <li className={`flex flex-col justify-between h-full rounded-lg border p-3.5 transition-all duration-300 animate-fade-in ${statusDetails.cardBorderClass}`}>
         <div className="flex-1 flex flex-col justify-between gap-3">
           <div className="space-y-2.5">
             {/* Top header */}
@@ -111,10 +95,10 @@ export const HistoryItem = ({ sid, row }: { sid: string; row: HistoryRow }) => {
 
               <div className="flex flex-col items-end gap-1 shrink-0">
                 <div className="flex items-center gap-1.5">
-                  <Badge variant="outline" className={`text-[9px] px-1.5 h-4.5 font-semibold rounded-md ${badgeClass}`}>
+                  <Badge variant="outline" className={`text-[9px] px-1.5 h-4.5 font-semibold rounded-md ${statusDetails.badgeClass}`}>
                     <span className="flex items-center gap-1">
                       <DirIcon className="h-2.5 w-2.5" />
-                      {statusBadgeText}
+                      {statusDetails.badgeText}
                     </span>
                   </Badge>
 
@@ -137,26 +121,25 @@ export const HistoryItem = ({ sid, row }: { sid: string; row: HistoryRow }) => {
               </div>
             </div>
 
-            {/* Informação elegante do status de chamada não atendida ou recusada diretamente no corpo do card */}
-            {row.endReason === "accepted_elsewhere" ? (
-              <div className="flex items-center gap-1 text-[10px] font-bold text-blue-600 dark:text-blue-400 mt-1 pl-1">
-                <PhoneMissed className="h-3 w-3 rotate-180 shrink-0" />
-                <span>Atendida em outro dispositivo</span>
-              </div>
-            ) : isMissedOrRejected ? (
+            {/* Informação do status da chamada */}
+            {statusDetails.statusType !== "completed" && (
               <div className={`flex items-center gap-1 text-[10px] font-bold mt-1 pl-1 ${
-                row.endReason === "rejected"
+                statusDetails.statusType === "accepted_elsewhere"
+                  ? "text-blue-600 dark:text-blue-400"
+                  : statusDetails.statusType === "rejected"
                   ? "text-red-600 dark:text-red-400"
                   : "text-amber-600 dark:text-amber-400"
               }`}>
-                {row.endReason === "rejected" ? <PhoneOff className="h-3 w-3 shrink-0" /> : <PhoneMissed className="h-3 w-3 shrink-0" />}
-                <span>
-                  {row.endReason === "rejected"
-                    ? (isInbound ? "Você recusou a chamada" : "O cliente recusou a chamada")
-                    : (isInbound ? "Chamada recebida não atendida" : "O cliente não atendeu")}
-                </span>
+                {statusDetails.statusType === "accepted_elsewhere" ? (
+                  <PhoneMissed className="h-3 w-3 rotate-180 shrink-0" />
+                ) : statusDetails.statusType === "rejected" ? (
+                  <PhoneOff className="h-3 w-3 shrink-0" />
+                ) : (
+                  <PhoneMissed className="h-3 w-3 shrink-0" />
+                )}
+                <span>{statusDetails.descriptionText}</span>
               </div>
-            ) : null}
+            )}
 
             {row.ticketOpened && (
               <div className="rounded-md bg-amber-500/5 p-2 text-[11px] text-amber-600 dark:text-amber-400 border border-amber-500/10 break-words leading-normal">
@@ -168,8 +151,8 @@ export const HistoryItem = ({ sid, row }: { sid: string; row: HistoryRow }) => {
             )}
           </div>
 
-          {/* Gravação e botões de ação (exibidos apenas se a chamada foi atendida) */}
-          {!isMissedOrRejected && (
+          {/* Gravação e botões de ação (exibidos apenas se a chamada foi atendida localmente neste servidor) */}
+          {statusDetails.showMedia && (
             <div className="space-y-2 pt-0.5">
               {row.recordingUrl && (
                 <div>
