@@ -4,8 +4,8 @@ import (
 	"encoding/base64"
 	"sort"
 	"strconv"
-	"wacalls/internal/voip/core"
-	"wacalls/internal/voip/wanode"
+	"kallia/internal/voip/core"
+	"kallia/internal/voip/wanode"
 
 	waBinary "go.mau.fi/whatsmeow/binary"
 )

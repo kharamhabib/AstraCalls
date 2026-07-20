@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"wacalls/internal/voip/call"
+	"kallia/internal/voip/call"
 
 	"go.mau.fi/whatsmeow/types"
 )

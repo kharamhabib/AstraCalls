@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"wacalls/internal/voip/call"
-	"wacalls/internal/voip/core"
+	"kallia/internal/voip/call"
+	"kallia/internal/voip/core"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
@@ -32,17 +32,18 @@ var geminiRestClient = &http.Client{Timeout: 60 * time.Second}
 
 // ServerAIAgent orquestra a ponte de áudio entre o WhatsApp e o Gemini Live no servidor.
 type ServerAIAgent struct {
-	gemini    *GeminiLiveClient
-	cm        *call.CallManager
-	sess      *Session
-	callID    string
-	peer      string
-	direction string
-	log       *slog.Logger
+	gemini       *GeminiLiveClient
+	cm           *call.CallManager
+	sess         *Session
+	callID       string
+	peer         string
+	direction    string
+	log          *slog.Logger
 
-	mu       sync.Mutex
-	detached bool
-	maxTimer *time.Timer
+	mu           sync.Mutex
+	detached     bool
+	transferring bool
+	maxTimer     *time.Timer
 
 	// Buffer de áudio para pacing (evitar choppy audio)
 	audioQueue []float32
@@ -84,6 +85,19 @@ func NewServerAIAgent(sess *Session, callID, peer, direction string, cm *call.Ca
 		if len(toolRules) > 0 {
 			config.SystemInstruction += "\n\n### REGRAS PARA O USO DE FERRAMENTAS (APIS):\n* Se a ferramenta exigir argumentos (como a mensagem de texto ou número no send_message), extraia-os naturalmente da fala do usuário ou use os valores padrões fornecidos, sem soletrar os parâmetros tecnicamente para o cliente.\n" + strings.Join(toolRules, "\n")
 		}
+	}
+
+	// Injetar a lista de especialistas disponíveis para transferência se houver
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	agents, err := sess.mgr.store.listAgents(ctxTimeout, sess.id)
+	if err == nil && len(agents) > 0 {
+		var agentHelp []string
+		for _, ag := range agents {
+			agentHelp = append(agentHelp, fmt.Sprintf("- ID: %s | Nome: %s | Especialidade: %s", ag.ID, ag.Name, ag.Description))
+		}
+		config.SystemInstruction += "\n\n### TRANSFERÊNCIA DE CHAMADA PARA ESPECIALISTAS:\nVocê tem a capacidade de transferir a chamada para outros especialistas da equipe se o cliente pedir para falar com outro setor ou se você não souber responder. Chame a ferramenta `transfer_to_agent` passando o ID do especialista correspondente:\n" + strings.Join(agentHelp, "\n")
+		config.PredefinedTools = append(config.PredefinedTools, "transfer_to_agent")
 	}
 
 	// Se a instrução de sistema não contiver o histórico do Chatwoot, resolve o histórico no backend
@@ -439,6 +453,19 @@ func (a *ServerAIAgent) Detach() {
 // handleToolCall processa tool calls do Gemini.
 func (a *ServerAIAgent) handleToolCall(ctx context.Context, name string, args map[string]any) map[string]any {
 	switch name {
+	case "transfer_to_agent":
+		a.log.Info("[ServerAIAgent] Tool transfer_to_agent disparada", "args", args)
+		targetAgentID, _ := args["agent_id"].(string)
+		if targetAgentID == "" {
+			return map[string]any{"error": "agent_id é obrigatório"}
+		}
+		goSafe(a.log, func() {
+			if err := a.TransferTo(context.Background(), targetAgentID); err != nil {
+				a.log.Error("[ServerAIAgent] Erro ao transferir chamada", "err", err)
+			}
+		})
+		return map[string]any{"status": "transferência de chamada iniciada"}
+
 	case "hangup":
 		a.log.Info("[ServerAIAgent] Tool hangup disparada")
 		// Aguarda ativamente o fim do áudio na fila antes de desligar
@@ -902,4 +929,122 @@ func (a *ServerAIAgent) waitForAudioFinish(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// TransferTo realiza o swap a quente do websocket da IA antiga pelo do novo agente (persona destino) mantendo o fluxo VoIP ativo
+func (a *ServerAIAgent) TransferTo(ctx context.Context, targetAgentID string) error {
+	a.mu.Lock()
+	if a.detached {
+		a.mu.Unlock()
+		return fmt.Errorf("agente já desconectado")
+	}
+	a.transferring = true
+	a.mu.Unlock()
+
+	a.log.Info("[ServerAIAgent] Iniciando transferência de chamada", "targetAgentID", targetAgentID)
+
+	// 1. Carregar configurações do agente destino
+	agentRow, err := a.sess.mgr.store.getAgent(ctx, targetAgentID)
+	if err != nil {
+		a.mu.Lock()
+		a.transferring = false
+		a.mu.Unlock()
+		return err
+	}
+	if agentRow == nil {
+		a.mu.Lock()
+		a.transferring = false
+		a.mu.Unlock()
+		return fmt.Errorf("agente não encontrado")
+	}
+
+	var targetCfg AIConfig
+	if err := json.Unmarshal([]byte(agentRow.AIConfig), &targetCfg); err != nil {
+		a.mu.Lock()
+		a.transferring = false
+		a.mu.Unlock()
+		return fmt.Errorf("configuração de IA inválida: %w", err)
+	}
+
+	// Herdar chaves se vazias
+	if targetCfg.GeminiAPIKey == "" {
+		targetCfg.GeminiAPIKey = a.sess.getAIConfig().GeminiAPIKey
+	}
+	targetCfg.ChatwootEnabled = a.sess.getChatwoot().valid()
+
+	// 2. Fechar conexão antiga do Gemini Live
+	a.log.Info("[ServerAIAgent] Fechando conexão anterior com o Gemini Live")
+	a.gemini.Close()
+
+	// 3. Conectar com as instruções da nova persona
+	a.log.Info("[ServerAIAgent] Abrindo nova conexão com o Gemini Live", "agente", agentRow.Name)
+	newClient := NewGeminiLiveClient(targetCfg, a.log)
+
+	// Limpar áudios residuais da IA anterior
+	a.queueMu.Lock()
+	a.audioQueue = nil
+	a.queueMu.Unlock()
+
+	err = newClient.Connect(
+		// onAudio: áudio da nova IA
+		func(pcm24k []float32) {
+			pcm16k := Downsample24to16(pcm24k)
+			if len(pcm16k) == 0 {
+				return
+			}
+			a.queueMu.Lock()
+			a.audioQueue = append(a.audioQueue, pcm16k...)
+			a.queueMu.Unlock()
+		},
+		// onText
+		func(speaker, text string) {
+			prefix := "🎤 Cliente disse:"
+			if speaker == "ai" {
+				prefix = "📝 IA disse:"
+			}
+			a.log.Info("[ServerAI - Transferido] transcrição", "origem", prefix, "texto", text)
+
+			a.sess.mgr.broker.broadcast(map[string]any{
+				"type":      "ai-transcript",
+				"sessionId": a.sess.id,
+				"callId":    a.callID,
+				"speaker":   speaker,
+				"text":      text,
+			})
+		},
+		// onToolCall (permite novas transferências)
+		func(name string, args map[string]any) map[string]any {
+			return a.handleToolCall(ctx, name, args)
+		},
+		// onClose: fecha se cair, mas apenas se não estivermos no meio de outra transferência
+		func() {
+			a.mu.Lock()
+			transferring := a.transferring
+			a.mu.Unlock()
+			if !transferring {
+				a.log.Warn("[ServerAIAgent] Conexão do novo agente fechou")
+				a.Detach()
+			}
+		},
+		// onInterrupt
+		func() {
+			a.queueMu.Lock()
+			a.audioQueue = nil
+			a.queueMu.Unlock()
+		},
+	)
+	if err != nil {
+		a.mu.Lock()
+		a.transferring = false
+		a.mu.Unlock()
+		return fmt.Errorf("conectar novo agente Gemini: %w", err)
+	}
+
+	a.mu.Lock()
+	a.gemini = newClient
+	a.transferring = false
+	a.mu.Unlock()
+
+	a.log.Info("[ServerAIAgent] Transferência concluída com sucesso para o agente", "nome", agentRow.Name)
+	return nil
 }

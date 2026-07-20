@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -113,7 +115,7 @@ func (m *SessionManager) snapshotEvents() []any {
 }
 
 func (m *SessionManager) Restore(ctx context.Context) error {
-	rows, err := m.store.list(ctx)
+	rows, err := m.store.listAll(ctx)
 	if err != nil {
 		return err
 	}
@@ -144,7 +146,7 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 		}
 		client := whatsmeow.NewClient(device, m.waLogger)
 		client.ManualHistorySyncDownload = true
-		s := newSession(m, row.ID, row.Name, client)
+		s := newSession(m, row.ID, row.Name, row.ProjectID, row.APIKey, client)
 		s.waContainer = container
 		s.waDB = db
 		s.setWebhook(row.Webhook)
@@ -170,31 +172,36 @@ func (m *SessionManager) Restore(ctx context.Context) error {
 	return nil
 }
 
-func (m *SessionManager) Create(name string) (string, error) {
+func (m *SessionManager) Create(name, projectID string) (string, string, error) {
 	id := newSessionID()
-	if err := m.store.insert(m.appCtx, id, name); err != nil {
-		return "", err
+	// Gerar chave de API específica da conexão
+	apiKeyBytes := make([]byte, 16)
+	_, _ = rand.Read(apiKeyBytes)
+	apiKey := "kc_" + hex.EncodeToString(apiKeyBytes)
+
+	if err := m.store.insert(m.appCtx, id, name, projectID, apiKey); err != nil {
+		return "", "", err
 	}
 	container, db, err := m.db.openSessionContainer(m.appCtx, id)
 	if err != nil {
 		_ = m.store.delete(m.appCtx, id)
 		_ = m.db.dropSessionDB(m.appCtx, id)
-		return "", fmt.Errorf("create session store: %w", err)
+		return "", "", fmt.Errorf("create session store: %w", err)
 	}
 	device := container.NewDevice()
 	client := whatsmeow.NewClient(device, m.waLogger)
 	client.ManualHistorySyncDownload = true
-	s := newSession(m, id, name, client)
+	s := newSession(m, id, name, projectID, apiKey, client)
 	s.waContainer = container
 	s.waDB = db
 	m.register(s)
 	m.broker.emitSessionList(m.infos())
 	if err := s.startPairing(m.appCtx); err != nil {
 		m.log.Error("start pairing failed", "session", id, "err", err)
-		return "", fmt.Errorf("start pairing: %w", err)
+		return "", "", fmt.Errorf("start pairing: %w", err)
 	}
 	m.log.Info("session created", "session", id, "name", name)
-	return id, nil
+	return id, apiKey, nil
 }
 
 func (m *SessionManager) Rename(ctx context.Context, id, name string) error {

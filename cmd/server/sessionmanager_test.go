@@ -42,7 +42,7 @@ func newTestManager(t *testing.T) *SessionManager {
 func (m *SessionManager) addUnconnected(t *testing.T, name string) *Session {
 	t.Helper()
 	id := newSessionID()
-	if err := m.store.insert(m.appCtx, id, name); err != nil {
+	if err := m.store.insert(m.appCtx, id, name, "default", "kc_test"); err != nil {
 		t.Fatal(err)
 	}
 	container, db, err := m.db.openSessionContainer(m.appCtx, id)
@@ -50,7 +50,7 @@ func (m *SessionManager) addUnconnected(t *testing.T, name string) *Session {
 		t.Fatal(err)
 	}
 	client := whatsmeow.NewClient(container.NewDevice(), waLog.Noop)
-	s := newSession(m, id, name, client)
+	s := newSession(m, id, name, "default", "kc_test", client)
 	s.waContainer = container
 	s.waDB = db
 	m.register(s)

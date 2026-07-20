@@ -3,8 +3,8 @@ package main
 import (
 	"sync"
 
-	"wacalls/internal/voip/call"
-	"wacalls/internal/voip/media"
+	"kallia/internal/voip/call"
+	"kallia/internal/voip/media"
 )
 
 type activeCall struct {

@@ -1,4 +1,4 @@
-import { apiGet } from "@/lib/api";
+import { apiGet, apiDelete } from "@/lib/api";
 import type { HistoryRow } from "@/types/history";
 
 export interface TranscriptLine {
@@ -12,3 +12,5 @@ export const fetchHistory = (sid: string) =>
 export const fetchTranscript = (sid: string, callId: string) =>
   apiGet<{ transcript: TranscriptLine[] }>(`/api/sessions/${sid}/history/${callId}/transcript`).then((r) => r.transcript ?? []);
 
+export const deleteHistoryCall = (sid: string, callId: string) =>
+  apiDelete(`/api/sessions/${sid}/history/${callId}`);

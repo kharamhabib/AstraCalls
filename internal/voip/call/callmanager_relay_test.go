@@ -2,7 +2,7 @@ package call
 
 import (
 	"testing"
-	"wacalls/internal/voip/core"
+	"kallia/internal/voip/core"
 )
 
 func TestBuildRelayConfigs(t *testing.T) {

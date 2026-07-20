@@ -6,6 +6,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { ConnectionsPage } from "@/pages/ConnectionsPage";
 import { CallsPage } from "@/pages/CallsPage";
+import { AgentsPage } from "@/pages/AgentsPage";
 import { SettingsTab } from "@/components/domain/settings/SettingsTab";
 import { SchedulesTab } from "@/components/domain/schedule/SchedulesTab";
 import { WebphoneDrawer } from "@/components/domain/call/WebphoneDrawer";
@@ -65,6 +66,7 @@ export const App = () => {
             {activeSection === "dashboard" && <DashboardPage sid={active.id} />}
             {activeSection === "calls" && <CallsPage sid={active.id} />}
             {activeSection === "schedules" && <SchedulesTab sid={active.id} />}
+            {activeSection === "agents" && <AgentsPage sid={active.id} />}
             {activeSection === "settings" && <SettingsTab sid={active.id} />}
           </>
         ) : (

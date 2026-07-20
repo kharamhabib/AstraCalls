@@ -12,14 +12,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"wacalls/internal/voip/call"
-	"wacalls/internal/voip/core"
-	"wacalls/internal/voip/media"
-	"wacalls/internal/voip/signaling"
-	"wacalls/internal/voip/wanode"
-	"wacalls/internal/wa"
+	"kallia/internal/voip/call"
+	"kallia/internal/voip/core"
+	"kallia/internal/voip/media"
+	"kallia/internal/voip/signaling"
+	"kallia/internal/voip/wanode"
+	"kallia/internal/wa"
 
 	"database/sql"
+	"encoding/hex"
 
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
@@ -32,10 +33,12 @@ import (
 )
 
 type Session struct {
-	id   string
-	name string
-	mgr  *SessionManager
-	log  *slog.Logger
+	id        string
+	name      string
+	mgr       *SessionManager
+	log       *slog.Logger
+	projectID string
+	apiKey    string
 
 	// client é atômico: replaceClient (logout/pair) troca a instância enquanto
 	// handlers HTTP e eventos a leem — sem lock isso era um data race.
@@ -94,14 +97,16 @@ func (s *Session) getAIConfig() AIConfig {
 	return s.aiConfig
 }
 
-func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {
+func newSession(mgr *SessionManager, id, name, projectID, apiKey string, client *whatsmeow.Client) *Session {
 	s := &Session{
-		id:   id,
-		name: name,
-		mgr:  mgr,
-		log:  mgr.log.With("session", id),
-		auth: AuthSnapshot{State: "connecting"},
-		reg:  newCallRegistry(),
+		id:        id,
+		name:      name,
+		mgr:       mgr,
+		log:       mgr.log.With("session", id),
+		projectID: projectID,
+		apiKey:    apiKey,
+		auth:      AuthSnapshot{State: "connecting"},
+		reg:       newCallRegistry(),
 	}
 	s.client.Store(client)
 	client.AddEventHandler(s.handleEvent)
@@ -298,8 +303,8 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 
 	if isServerCall {
 		s.log.Info("Incoming call detected from another server/companion device", "peerJid", evt.From.String())
-		if os.Getenv("WACALLS_REJECT_COMPANION_CALLS") == "true" {
-			s.log.Info("Rejecting server call due to WACALLS_REJECT_COMPANION_CALLS=true", "callId", callID)
+		if envStr("KALLIA_REJECT_COMPANION_CALLS", "WACALLS_REJECT_COMPANION_CALLS", "") == "true" {
+			s.log.Info("Rejecting server call due to KALLIA_REJECT_COMPANION_CALLS=true", "callId", callID)
 			info := signaling.ExtractNodeInfo(node)
 			if info != nil {
 				creator := wanode.AttrString(info.InnerNode.Attrs, "call-creator")
@@ -420,6 +425,10 @@ func (s *Session) handleEvent(rawEvt any) {
 		if s.mgr.followup != nil {
 			s.mgr.followup.CancelFollowup(sender)
 		}
+		if evt.Message.GetPollUpdateMessage() != nil {
+			go s.handlePollVote(ctx, evt)
+			break
+		}
 		text := evt.Message.GetConversation()
 		if text == "" && evt.Message.ExtendedTextMessage != nil {
 			text = evt.Message.ExtendedTextMessage.GetText()
@@ -515,7 +524,15 @@ func (s *Session) info() SessionInfo {
 	if id := s.getClient().Store.ID; id != nil {
 		jid = id.String()
 	}
-	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != ""}
+	return SessionInfo{
+		ID:        s.id,
+		Name:      s.name,
+		JID:       jid,
+		State:     a.State,
+		Paired:    a.Paired || jid != "",
+		ProjectID: s.projectID,
+		APIKey:    s.apiKey,
+	}
 }
 
 func (s *Session) IsPaired() bool {
@@ -609,4 +626,43 @@ func mapStatus(state core.CallState) CallStatus {
 	default:
 		return StatusRinging
 	}
+}
+
+func (s *Session) handlePollVote(ctx context.Context, evt *events.Message) {
+	pollUpdate := evt.Message.GetPollUpdateMessage()
+	if pollUpdate == nil {
+		return
+	}
+	pollID := pollUpdate.GetPollCreationMessageKey().GetID()
+	pollVote, err := s.getClient().DecryptPollVote(ctx, evt)
+	if err != nil {
+		s.log.Error("falha ao descriptografar voto de enquete", "poll_id", pollID, "err", err)
+		return
+	}
+
+	type voteOption struct {
+		Hash string `json:"hash"`
+		Text string `json:"text,omitempty"`
+	}
+
+	votes := make([]voteOption, 0, len(pollVote.GetSelectedOptions()))
+	for _, optHashBytes := range pollVote.GetSelectedOptions() {
+		hashHex := hex.EncodeToString(optHashBytes)
+		text, err := s.mgr.store.resolvePollOption(ctx, s.id, pollID, hashHex)
+		if err != nil {
+			s.log.Warn("falha ao resolver hash de opcao da enquete", "hash", hashHex, "err", err)
+		}
+		votes = append(votes, voteOption{
+			Hash: hashHex,
+			Text: text,
+		})
+	}
+
+	s.dispatchWebhook("poll_vote", map[string]any{
+		"poll_id":   pollID,
+		"sender":    evt.Info.Sender.String(),
+		"chat":      evt.Info.Chat.String(),
+		"timestamp": evt.Info.Timestamp.UnixMilli(),
+		"votes":     votes,
+	})
 }

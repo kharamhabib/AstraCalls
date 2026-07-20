@@ -7,7 +7,7 @@
  *
  * SEGURANÇA: a API key fica visível no HTML para qualquer agente logado no
  * Chatwoot. Recomenda-se usar uma instalação com acesso restrito por domínio
- * (WACALLS_CORS_ORIGINS) e HTTPS obrigatório. A conexão de eventos (SSE) usa
+ * (KALLIA_CORS_ORIGINS) e HTTPS obrigatório. A conexão de eventos (SSE) usa
  * tickets de uso único — a key nunca aparece na URL.
  */
 (function () {

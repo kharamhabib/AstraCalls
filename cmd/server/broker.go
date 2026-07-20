@@ -41,11 +41,13 @@ type AuthSnapshot struct {
 }
 
 type SessionInfo struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	JID    string `json:"jid"`
-	State  string `json:"state"`
-	Paired bool   `json:"paired"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	JID       string `json:"jid"`
+	State     string `json:"state"`
+	Paired    bool   `json:"paired"`
+	ProjectID string `json:"projectId"`
+	APIKey    string `json:"apiKey"`
 }
 
 type subscriber struct {
@@ -274,6 +276,22 @@ func (b *Broker) saveSummary(sessionID, callID, summary string) {
 	if b.History != nil {
 		b.History.SaveSummary(sessionID, callID, summary)
 	}
+}
+
+func (b *Broker) removeCall(sessionID, callID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.calls, callID)
+	
+	n := 0
+	for _, rec := range b.history {
+		if rec.SessionID == sessionID && rec.CallID == callID {
+			continue
+		}
+		b.history[n] = rec
+		n++
+	}
+	b.history = b.history[:n]
 }
 
 // loadHistory hidrata o histórico em memória a partir da persistência

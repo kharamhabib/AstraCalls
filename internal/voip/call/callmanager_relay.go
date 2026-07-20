@@ -1,8 +1,8 @@
 package call
 
 import (
-	"wacalls/internal/voip/core"
-	"wacalls/internal/voip/transport"
+	"kallia/internal/voip/core"
+	"kallia/internal/voip/transport"
 )
 
 type RelayTransport interface {

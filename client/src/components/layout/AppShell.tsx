@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Menu, BookOpen, LogOut, ChevronDown, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { isAuthed, clearAuth } from "@/lib/auth";
+import { isAuthed, clearAuth, getUser } from "@/lib/auth";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Sidebar } from "./Sidebar";
 import { ThemeToggle } from "./ThemeToggle";
@@ -14,6 +14,7 @@ const sectionTitles: Record<string, string> = {
   connections: "Conexões WhatsApp",
   calls: "Central de Chamadas & Webphone",
   schedules: "Agendamentos de Ligações IA",
+  agents: "Agentes & Especialistas de IA",
   settings: "Ajustes & IA",
 };
 
@@ -125,20 +126,36 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
               </a>
             </Button>
             <ThemeToggle />
-            {isAuthed() && (
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Sair"
-                className="text-muted-foreground hover:text-foreground"
-                onClick={() => {
-                  clearAuth();
-                  location.reload();
-                }}
-              >
-                <LogOut className="h-4 w-4" />
-              </Button>
-            )}
+            {isAuthed() && (() => {
+              const user = getUser();
+              return (
+                <div className="flex items-center gap-2">
+                  {user && (
+                    <div className="hidden sm:flex items-center gap-2 rounded-xl border bg-card/60 px-3 py-1.5">
+                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/20 text-primary text-[10px] font-bold shrink-0">
+                        {(user.email || user.name || "?")[0].toUpperCase()}
+                      </div>
+                      <div className="leading-none">
+                        <p className="text-xs font-semibold truncate max-w-[110px]">{user.name || user.email}</p>
+                        <p className="text-[10px] text-muted-foreground capitalize">{user.role || "user"}</p>
+                      </div>
+                    </div>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Sair"
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      clearAuth();
+                      location.reload();
+                    }}
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </Button>
+                </div>
+              );
+            })()}
           </div>
         </header>
 

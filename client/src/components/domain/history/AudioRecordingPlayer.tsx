@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Play, Pause, Download, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { apiUrl, getApiKey } from "@/lib/auth";
+import { apiUrl, getToken } from "@/lib/auth";
 
 export const AudioRecordingPlayer = ({ recordingUrl }: { recordingUrl: string }) => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -9,10 +9,12 @@ export const AudioRecordingPlayer = ({ recordingUrl }: { recordingUrl: string })
   const [duration, setDuration] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const apiKey = getApiKey();
+  // Audio elements can't use custom headers, so we append the JWT token as a query param.
+  // The backend accepts ?apiKey=... for backwards compatibility, but we send the JWT.
+  const token = getToken();
   const fullUrl = recordingUrl.startsWith("http") || recordingUrl.startsWith("blob:") ? recordingUrl : apiUrl(recordingUrl);
-  const authenticatedUrl = apiKey
-    ? (fullUrl.includes("?") ? `${fullUrl}&apiKey=${apiKey}` : `${fullUrl}?apiKey=${apiKey}`)
+  const authenticatedUrl = token
+    ? (fullUrl.includes("?") ? `${fullUrl}&apiKey=${token}` : `${fullUrl}?apiKey=${token}`)
     : fullUrl;
 
   const togglePlay = () => {

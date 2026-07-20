@@ -14,45 +14,77 @@ import (
 	"time"
 )
 
-// envInt lê um inteiro de uma variável de ambiente (com valor padrão).
-func envInt(key string, def int) int {
+// envStr lê uma string de uma variável de ambiente primária (KALLIA_*) ou fallback (WACALLS_*).
+func envStr(key, fallbackKey, def string) string {
 	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
+		return v
+	}
+	if fallbackKey != "" {
+		if v := os.Getenv(fallbackKey); v != "" {
+			return v
+		}
+	}
+	return def
+}
+
+// envInt lê um inteiro de uma variável de ambiente primária (KALLIA_*) ou fallback (WACALLS_*).
+func envInt(key, fallbackKey string, def int) int {
+	vStr := envStr(key, fallbackKey, "")
+	if vStr != "" {
+		if n, err := strconv.Atoi(vStr); err == nil {
 			return n
 		}
 	}
 	return def
 }
 
-// envStr lê uma string de uma variável de ambiente (com valor padrão).
-func envStr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+func loadDotEnv() {
+	if os.Getenv("KALLIA_PG_URL") != "" || os.Getenv("WACALLS_PG_URL") != "" {
+		return
 	}
-	return def
+	paths := []string{".env", "../.env", "../../.env"}
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				key := strings.TrimSpace(parts[0])
+				val := strings.TrimSpace(parts[1])
+				val = strings.Trim(val, `"'`)
+				if os.Getenv(key) == "" {
+					os.Setenv(key, val)
+				}
+			}
+		}
+		break
+	}
 }
 
 func main() {
+	loadDotEnv()
+	initJWTSecret()
 	addr := flag.String("addr", ":8080", "HTTP listen address")
-	// Storage: Postgres (1 banco por sessão, estilo WAHA). URL de manutenção em
-	// WACALLS_PG_URL (ex.: postgres://user:pass@host:5432/postgres?sslmode=disable);
-	// o usuário precisa de permissão CREATE DATABASE. WACALLS_PG_NAMESPACE = prefixo
-	// dos bancos (default "wacalls" -> wacalls_main + wacalls_<id>).
-	pgURL := flag.String("pg-url", os.Getenv("WACALLS_PG_URL"), "Postgres maintenance URL")
-	pgNS := flag.String("pg-namespace", envStr("WACALLS_PG_NAMESPACE", "wacalls"), "prefix for per-session databases")
+	// Storage: Postgres (1 banco por sessão). URL de manutenção em KALLIA_PG_URL
+	pgURL := flag.String("pg-url", envStr("KALLIA_PG_URL", "WACALLS_PG_URL", ""), "Postgres maintenance URL")
+	pgNS := flag.String("pg-namespace", envStr("KALLIA_PG_NAMESPACE", "WACALLS_PG_NAMESPACE", "kallia"), "prefix for per-session databases")
 	staticDir := flag.String("static", "client/dist", "static client directory (optional)")
 	debug := flag.Bool("debug", false, "verbose logging")
-	// Padrão vem da env WACALLS_MAX_CALLS (fácil de editar na stack do Portainer);
-	// a flag -max-calls-per-session ainda sobrescreve se passada.
-	maxCalls := flag.Int("max-calls-per-session", envInt("WACALLS_MAX_CALLS", 8), "max concurrent calls per session (0 = unlimited)")
+	maxCalls := flag.Int("max-calls-per-session", envInt("KALLIA_MAX_CALLS", "WACALLS_MAX_CALLS", 8), "max concurrent calls per session (0 = unlimited)")
 	flag.Parse()
 
 	level := slog.LevelInfo
 	if *debug {
 		level = slog.LevelDebug
 	}
-	// WACALLS_LOG_LEVEL (debug|info|warn|error) tem precedência sobre a flag.
-	switch strings.ToLower(envStr("WACALLS_LOG_LEVEL", "")) {
+	switch strings.ToLower(envStr("KALLIA_LOG_LEVEL", "WACALLS_LOG_LEVEL", "")) {
 	case "debug":
 		level = slog.LevelDebug
 	case "info":

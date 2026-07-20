@@ -1,4 +1,4 @@
-import { LayoutDashboard, Radio, PhoneCall, Calendar, Settings, PhoneForwarded } from "lucide-react";
+import { LayoutDashboard, Radio, PhoneCall, Calendar, Settings, PhoneForwarded, Bot } from "lucide-react";
 import { useNavigation, type NavSection } from "@/stores/navigation";
 import { useSessions } from "@/stores/sessions";
 import { cn } from "@/lib/utils";
@@ -8,6 +8,7 @@ const navItems: { id: NavSection; label: string; icon: typeof LayoutDashboard }[
   { id: "connections", label: "Conexões", icon: Radio },
   { id: "calls", label: "Chamadas", icon: PhoneCall },
   { id: "schedules", label: "Agendamentos", icon: Calendar },
+  { id: "agents", label: "Agentes IA", icon: Bot },
   { id: "settings", label: "Ajustes", icon: Settings },
 ];
 

@@ -2,10 +2,10 @@ package call
 
 import (
 	"context"
-	"wacalls/internal/voip/core"
-	"wacalls/internal/voip/media"
-	"wacalls/internal/voip/signaling"
-	"wacalls/internal/voip/wanode"
+	"kallia/internal/voip/core"
+	"kallia/internal/voip/media"
+	"kallia/internal/voip/signaling"
+	"kallia/internal/voip/wanode"
 
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"

@@ -7,7 +7,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"wacalls/internal/voip/core"
+	"kallia/internal/voip/core"
 )
 
 type SrtpErrorType string

@@ -3,7 +3,7 @@ package call
 import (
 	"testing"
 
-	"wacalls/internal/voip/core"
+	"kallia/internal/voip/core"
 )
 
 func TestCallStateMachine(t *testing.T) {

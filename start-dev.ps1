@@ -1,5 +1,5 @@
-# Script de Inicialização do AstraCalls
-# Inicia tanto o backend Go (com CGO/mlow habilitado) quanto o frontend React em janelas separadas.
+# Script de Inicialização do Kallia
+# Inicia tanto o backend Go quanto o frontend React em janelas separadas.
 
 # 1. Carrega as variáveis do arquivo .env
 Write-Host "Carregando variáveis do arquivo .env..." -ForegroundColor Cyan
@@ -31,13 +31,17 @@ $env:CGO_ENABLED = "1"
 $env:CGO_LDFLAGS = "-L.\native -lopus_mlow"
 $env:PATH = "$pwd\native;" + $env:PATH
 
-# 3. Inicia o Servidor Backend (Go) em uma janela separada
-Write-Host "Iniciando o Servidor Backend (Go) na porta 3001..." -ForegroundColor Green
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = 'AstraCalls Backend'; go run -tags mlow ./cmd/server -addr :3001 -debug" -WorkingDirectory $pwd
+# 3. Compila o binário se não existir ou se atualizado
+Write-Host "Compilando backend Kallia..." -ForegroundColor Cyan
+go build -tags mlow -o kallia.exe ./cmd/server
 
-# 4. Inicia o Servidor Frontend (Vite) em outra janela separada
+# 4. Inicia o Servidor Backend (Go) em uma janela separada
+Write-Host "Iniciando o Servidor Backend (Go) na porta 3001..." -ForegroundColor Green
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = 'Kallia Backend'; .\kallia.exe -addr :3001 -debug" -WorkingDirectory $PSScriptRoot
+
+# 5. Inicia o Servidor Frontend (Vite) em outra janela separada
 Write-Host "Iniciando o Servidor Frontend (Vite) na porta 5173..." -ForegroundColor Green
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = 'AstraCalls Frontend'; cd client; npm run dev" -WorkingDirectory $pwd
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = 'Kallia Frontend'; Set-Location client; npm run dev" -WorkingDirectory $PSScriptRoot
 
 Write-Host "`nPronto! Ambos os serviços foram iniciados em novas janelas do PowerShell." -ForegroundColor Green
 Write-Host "• Backend: http://localhost:3001" -ForegroundColor Yellow

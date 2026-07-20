@@ -34,7 +34,7 @@ COPY --from=opus /opt/libopus_mlow.so /src/native/libopus_mlow.so
 ENV CGO_ENABLED=1 \
     CC=gcc \
     CGO_LDFLAGS="-L/src/native -Wl,-rpath,/usr/local/lib"
-RUN go build -tags mlow -o /wacalls ./cmd/server
+RUN go build -tags mlow -o /kallia ./cmd/server
 
 # ---------- Stage 4: runtime enxuto ----------
 FROM debian:bookworm-slim AS runtime
@@ -42,7 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 COPY --from=opus /opt/libopus_mlow.so /usr/local/lib/libopus_mlow.so
 RUN ldconfig
-COPY --from=server /wacalls /usr/local/bin/wacalls
+COPY --from=server /kallia /usr/local/bin/kallia
 COPY --from=client /app/client/dist /app/client/dist
 WORKDIR /app
 RUN mkdir -p /app/storage/recordings
@@ -51,5 +51,5 @@ EXPOSE 8080 50000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD wget --spider -q http://localhost:8080/healthz || exit 1
 
-ENTRYPOINT ["wacalls"]
+ENTRYPOINT ["kallia"]
 CMD ["-addr", ":8080", "-static", "/app/client/dist"]

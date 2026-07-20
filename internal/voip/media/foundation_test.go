@@ -9,7 +9,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"wacalls/internal/voip/core"
+	"kallia/internal/voip/core"
 )
 
 func refHKDF(ikm, salt []byte, info string, length int) []byte {

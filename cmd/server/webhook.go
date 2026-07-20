@@ -73,6 +73,28 @@ func summarizeMessage(evt *events.Message) map[string]any {
 		"type":      messageType(evt.Message),
 		"text":      messageText(evt.Message),
 	}
+
+	if btnResp := evt.Message.GetButtonsResponseMessage(); btnResp != nil {
+		out["buttonResponse"] = map[string]string{
+			"id":   btnResp.GetSelectedButtonID(),
+			"text": btnResp.GetSelectedDisplayText(),
+		}
+	} else if templResp := evt.Message.GetTemplateButtonReplyMessage(); templResp != nil {
+		out["buttonResponse"] = map[string]string{
+			"id":   templResp.GetSelectedID(),
+			"text": templResp.GetSelectedDisplayText(),
+		}
+	} else if listResp := evt.Message.GetListResponseMessage(); listResp != nil {
+		var rowID string
+		if listResp.GetSingleSelectReply() != nil {
+			rowID = listResp.GetSingleSelectReply().GetSelectedRowID()
+		}
+		out["buttonResponse"] = map[string]string{
+			"id":   rowID,
+			"text": listResp.GetTitle(),
+		}
+	}
+
 	if raw, err := protojson.Marshal(evt.Message); err == nil {
 		out["raw"] = json.RawMessage(raw)
 	}
@@ -89,6 +111,12 @@ func messageText(m *waE2E.Message) string {
 		return m.GetImageMessage().GetCaption()
 	case m.GetVideoMessage() != nil:
 		return m.GetVideoMessage().GetCaption()
+	case m.GetButtonsResponseMessage() != nil:
+		return m.GetButtonsResponseMessage().GetSelectedDisplayText()
+	case m.GetTemplateButtonReplyMessage() != nil:
+		return m.GetTemplateButtonReplyMessage().GetSelectedDisplayText()
+	case m.GetListResponseMessage() != nil:
+		return m.GetListResponseMessage().GetTitle()
 	}
 	return ""
 }
@@ -111,6 +139,10 @@ func messageType(m *waE2E.Message) string {
 		return "location"
 	case m.GetContactMessage() != nil:
 		return "contact"
+	case m.GetButtonsResponseMessage() != nil || m.GetTemplateButtonReplyMessage() != nil:
+		return "button_reply"
+	case m.GetListResponseMessage() != nil:
+		return "list_reply"
 	}
 	return "unknown"
 }

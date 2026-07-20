@@ -3,20 +3,26 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type sessionRow struct {
-	ID       string
-	Name     string
-	JID      string
-	Webhook  string
-	Chatwoot string
-	AIConfig string
+	ID        string
+	Name      string
+	JID       string
+	Webhook   string
+	Chatwoot  string
+	AIConfig  string
+	ProjectID string
+	APIKey    string
 }
 
 type sessionStore struct{ db *sql.DB }
@@ -24,7 +30,35 @@ type sessionStore struct{ db *sql.DB }
 // newSessionStore cria a tabela de config das sessões no banco PRINCIPAL.
 // (O store do whatsmeow de cada sessão fica em um banco separado — ver db.go.)
 func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
-	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sessions (
+	// 1. Criar a tabela de projetos
+	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS projects (
+		id             TEXT PRIMARY KEY,
+		name           TEXT NOT NULL,
+		plan           TEXT NOT NULL DEFAULT 'basic',
+		plan_status    TEXT NOT NULL DEFAULT 'active',
+		plan_starts_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		plan_ends_at   TIMESTAMPTZ,
+		created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`)
+	if err != nil {
+		return nil, fmt.Errorf("criar tabela projects: %w", err)
+	}
+
+	// 2. Criar a tabela de usuários
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS users (
+		id            TEXT PRIMARY KEY,
+		email         TEXT UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
+		role          TEXT NOT NULL DEFAULT 'normal',
+		project_id    TEXT REFERENCES projects(id) ON DELETE SET NULL,
+		created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`)
+	if err != nil {
+		return nil, fmt.Errorf("criar tabela users: %w", err)
+	}
+
+	// 3. Criar a tabela de conexões (sessions)
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sessions (
 		id         TEXT PRIMARY KEY,
 		name       TEXT NOT NULL,
 		jid        TEXT,
@@ -36,11 +70,39 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	// migração p/ bancos antigos (Postgres aceita IF NOT EXISTS no ADD COLUMN)
+
+	// Migração para adicionar colunas webhook, chatwoot, ai_config, project_id, api_key
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS webhook TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS chatwoot TEXT`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS ai_config TEXT`)
+	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS project_id TEXT REFERENCES projects(id) ON DELETE CASCADE`)
+	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS api_key TEXT UNIQUE`)
 	_, _ = db.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
+
+	// 4. Executar migrações de dados de legado
+	_, _ = db.ExecContext(ctx, `
+		INSERT INTO projects (id, name, plan, plan_status, plan_starts_at, plan_ends_at)
+		VALUES ('default', 'Projeto Padrão', 'basic', 'active', now(), now() + interval '10 years')
+		ON CONFLICT (id) DO NOTHING
+	`)
+	_, _ = db.ExecContext(ctx, `UPDATE sessions SET project_id = 'default' WHERE project_id IS NULL`)
+	_, _ = db.ExecContext(ctx, `UPDATE sessions SET api_key = 'kc_' || md5(random()::text) WHERE api_key IS NULL`)
+
+	// 5. Criar a tabela de agentes (personas)
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS agents (
+		id          TEXT PRIMARY KEY,
+		session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+		name        TEXT NOT NULL,
+		description TEXT,
+		ai_config   TEXT NOT NULL,
+		inbound     BOOLEAN NOT NULL DEFAULT FALSE,
+		outbound    BOOLEAN NOT NULL DEFAULT FALSE,
+		created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`)
+	if err != nil {
+		return nil, fmt.Errorf("criar tabela agents: %w", err)
+	}
+
 
 	// Criar a tabela de transcrições de chamada
 	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS call_transcripts (
@@ -94,7 +156,168 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
 	}
 	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_call_ratings_session ON call_ratings(session_id)`)
 
-	return &sessionStore{db: db}, nil
+	// Criar a tabela de enquetes enviadas
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sent_polls (
+		session_id  TEXT NOT NULL,
+		poll_id     TEXT NOT NULL,
+		option_hash TEXT NOT NULL,
+		option_text TEXT NOT NULL,
+		PRIMARY KEY (session_id, poll_id, option_hash)
+	)`)
+	if err != nil {
+		return nil, fmt.Errorf("criar tabela sent_polls: %w", err)
+	}
+	_, _ = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_sent_polls_lookup ON sent_polls(session_id, poll_id)`)
+
+	store := &sessionStore{db: db}
+	if err := store.bootstrapInitialUserAndProject(ctx); err != nil {
+		slog.Error("[Bootstrap] Falha ao executar bootstrap inicial", "err", err)
+	}
+
+	return store, nil
+}
+
+// bootstrapInitialUserAndProject cria o projeto e usuário admin iniciais caso a tabela de usuários esteja vazia,
+// e vincula as conexões ativas/existentes (sessões de WhatsApp) a este projeto inicial para não perder dados.
+func (s *sessionStore) bootstrapInitialUserAndProject(ctx context.Context) error {
+	adminEmail := strings.TrimSpace(strings.ToLower(envStr("KALLIA_ADMIN_EMAIL", "WACALLS_ADMIN_EMAIL", "")))
+	adminPassword := envStr("KALLIA_ADMIN_PASSWORD", "WACALLS_ADMIN_PASSWORD", "")
+	projectName := envStr("KALLIA_INITIAL_PROJECT_NAME", "WACALLS_INITIAL_PROJECT_NAME", "")
+	projectPlan := envStr("KALLIA_INITIAL_PROJECT_PLAN", "WACALLS_INITIAL_PROJECT_PLAN", "expert")
+
+	// 1. Verificar se já existem usuários cadastrados no banco
+	var userCount int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&userCount)
+	if err != nil {
+		return fmt.Errorf("verificar usuários existentes: %w", err)
+	}
+
+	if userCount > 0 {
+		// Se já houver usuários, garantir que conexões sem project_id pertençam ao primeiro projeto ativo
+		var firstProjectID string
+		_ = s.db.QueryRowContext(ctx, `SELECT id FROM projects ORDER BY created_at ASC LIMIT 1`).Scan(&firstProjectID)
+		if firstProjectID != "" {
+			res, _ := s.db.ExecContext(ctx, `UPDATE sessions SET project_id = $1 WHERE project_id IS NULL OR project_id = '' OR project_id = 'default'`, firstProjectID)
+			if n, _ := res.RowsAffected(); n > 0 {
+				slog.Info("[Bootstrap] Conexões de WhatsApp órfãs vinculadas ao projeto existente", "projectId", firstProjectID, "count", n)
+			}
+		}
+		return nil
+	}
+
+	// 2. Caso não exista NENHUM usuário cadastrado, aplicar valores informados no .env ou padrão
+	if adminEmail == "" {
+		adminEmail = "kharamhabib@gmail.com"
+	}
+	if adminPassword == "" {
+		adminPassword = "040851"
+	}
+	if projectName == "" {
+		projectName = "KharaMhabib - Kallia"
+	}
+
+	// Criar/obter o projeto inicial
+	var projectID string
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM projects WHERE name = $1 LIMIT 1`, projectName).Scan(&projectID)
+	if err != nil || projectID == "" {
+		projectID = newSessionID()
+		_, err = s.db.ExecContext(ctx, `
+			INSERT INTO projects (id, name, plan, plan_status, plan_starts_at, plan_ends_at)
+			VALUES ($1, $2, $3, 'active', now(), now() + interval '10 years')
+			ON CONFLICT (id) DO NOTHING
+		`, projectID, projectName, projectPlan)
+		if err != nil {
+			return fmt.Errorf("criar projeto inicial de bootstrap: %w", err)
+		}
+	}
+
+	// Criar o usuário administrador inicial
+	hashed, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("gerar hash de senha inicial: %w", err)
+	}
+
+	userID := newSessionID()
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO users (id, email, password_hash, role, project_id)
+		VALUES ($1, $2, $3, 'admin', $4)
+		ON CONFLICT (email) DO NOTHING
+	`, userID, adminEmail, string(hashed), projectID)
+	if err != nil {
+		return fmt.Errorf("criar usuário admin inicial: %w", err)
+	}
+
+	// 3. Vincular TODAS as conexões de WhatsApp existentes no banco a este projeto inicial
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions SET project_id = $1 WHERE project_id IS NULL OR project_id = '' OR project_id = 'default'`, projectID)
+	linkedSessionsCount := int64(0)
+	if err == nil {
+		linkedSessionsCount, _ = res.RowsAffected()
+	}
+
+	slog.Info("[Bootstrap] Projeto inicial e usuário admin criados com sucesso!",
+		"email", adminEmail,
+		"projectId", projectID,
+		"projectName", projectName,
+		"plan", projectPlan,
+		"linkedSessions", linkedSessionsCount,
+	)
+
+	return nil
+}
+
+func (s *sessionStore) savePollOptions(ctx context.Context, sessionID, pollID string, options []string) error {
+	for _, opt := range options {
+		h := sha256.Sum256([]byte(opt))
+		hashHex := hex.EncodeToString(h[:])
+		_, err := s.db.ExecContext(ctx, `
+			INSERT INTO sent_polls (session_id, poll_id, option_hash, option_text)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (session_id, poll_id, option_hash) DO NOTHING
+		`, sessionID, pollID, hashHex, opt)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *sessionStore) resolvePollOption(ctx context.Context, sessionID, pollID, hashHex string) (string, error) {
+	var optText string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT option_text FROM sent_polls
+		WHERE session_id = $1 AND poll_id = $2 AND option_hash = $3
+	`, sessionID, pollID, hashHex).Scan(&optText)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return optText, err
+}
+
+func (s *sessionStore) deleteCall(ctx context.Context, sessionID, callID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `DELETE FROM call_history WHERE session_id = $1 AND call_id = $2`, sessionID, callID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM call_transcripts WHERE session_id = $1 AND call_id = $2`, sessionID, callID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM call_ratings WHERE session_id = $1 AND call_id = $2`, sessionID, callID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM sent_polls WHERE session_id = $1 AND poll_id = $2`, sessionID, callID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func newSessionID() string {
@@ -103,8 +326,26 @@ func newSessionID() string {
 	return hex.EncodeToString(b)
 }
 
-func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(jid, ''), COALESCE(webhook, ''), COALESCE(chatwoot, ''), COALESCE(ai_config, '') FROM sessions ORDER BY created_at`)
+func (s *sessionStore) getRawSession(ctx context.Context, id string) (*sessionRow, error) {
+	r := &sessionRow{}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, name, COALESCE(jid, ''), COALESCE(webhook, ''), COALESCE(chatwoot, ''), COALESCE(ai_config, ''), COALESCE(project_id, ''), COALESCE(api_key, '')
+		FROM sessions WHERE id = $1
+	`, id).Scan(&r.ID, &r.Name, &r.JID, &r.Webhook, &r.Chatwoot, &r.AIConfig, &r.ProjectID, &r.APIKey)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (s *sessionStore) listAll(ctx context.Context) ([]sessionRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, name, COALESCE(jid, ''), COALESCE(webhook, ''), COALESCE(chatwoot, ''), COALESCE(ai_config, ''), COALESCE(project_id, ''), COALESCE(api_key, '')
+		FROM sessions ORDER BY created_at
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +353,7 @@ func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
 	var out []sessionRow
 	for rows.Next() {
 		var r sessionRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.Webhook, &r.Chatwoot, &r.AIConfig); err != nil {
+		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.Webhook, &r.Chatwoot, &r.AIConfig, &r.ProjectID, &r.APIKey); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -120,8 +361,31 @@ func (s *sessionStore) list(ctx context.Context) ([]sessionRow, error) {
 	return out, rows.Err()
 }
 
-func (s *sessionStore) insert(ctx context.Context, id, name string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (id, name, jid) VALUES ($1, $2, NULL)`, id, name)
+func (s *sessionStore) list(ctx context.Context, projectID string) ([]sessionRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, name, COALESCE(jid, ''), COALESCE(webhook, ''), COALESCE(chatwoot, ''), COALESCE(ai_config, ''), COALESCE(project_id, ''), COALESCE(api_key, '')
+		FROM sessions WHERE project_id = $1 ORDER BY created_at
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []sessionRow
+	for rows.Next() {
+		var r sessionRow
+		if err := rows.Scan(&r.ID, &r.Name, &r.JID, &r.Webhook, &r.Chatwoot, &r.AIConfig, &r.ProjectID, &r.APIKey); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *sessionStore) insert(ctx context.Context, id, name, projectID, apiKey string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO sessions (id, name, jid, project_id, api_key)
+		VALUES ($1, $2, NULL, $3, $4)
+	`, id, name, projectID, apiKey)
 	return err
 }
 
@@ -429,4 +693,239 @@ func (p *pgHistoryPersister) SaveTicket(sessionID, callID, reason string) {
 			p.log.Error("falha ao persistir chamado da chamada", "callId", callID, "err", err)
 		}
 	})
+}
+
+// Structs e CRUD de Projetos, Usuários e Agentes para Multi-Tenancy
+
+type projectRow struct {
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	Plan         string     `json:"plan"`
+	PlanStatus   string     `json:"planStatus"`
+	PlanStartsAt time.Time  `json:"planStartsAt"`
+	PlanEndsAt   *time.Time `json:"planEndsAt,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+}
+
+type userRow struct {
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"-"`
+	Role         string    `json:"role"`
+	ProjectID    *string   `json:"projectId,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+type agentRow struct {
+	ID          string    `json:"id"`
+	SessionID   string    `json:"sessionId"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	AIConfig    string    `json:"aiConfig"`
+	Inbound     bool      `json:"inbound"`
+	Outbound    bool      `json:"outbound"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+// --- CRUD Projetos ---
+
+func (s *sessionStore) createProject(ctx context.Context, id, name, plan, planStatus string, start time.Time, end *time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO projects (id, name, plan, plan_status, plan_starts_at, plan_ends_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, id, name, plan, planStatus, start, end)
+	return err
+}
+
+func (s *sessionStore) getProject(ctx context.Context, id string) (*projectRow, error) {
+	r := &projectRow{}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, name, plan, plan_status, plan_starts_at, plan_ends_at, created_at
+		FROM projects WHERE id = $1
+	`, id).Scan(&r.ID, &r.Name, &r.Plan, &r.PlanStatus, &r.PlanStartsAt, &r.PlanEndsAt, &r.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (s *sessionStore) updateProjectBilling(ctx context.Context, id, plan, status string, end *time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE projects SET plan = $1, plan_status = $2, plan_ends_at = $3 WHERE id = $4
+	`, plan, status, end, id)
+	return err
+}
+
+// --- CRUD Usuários ---
+
+func (s *sessionStore) createUser(ctx context.Context, id, email, passwordHash, role, projectID string) error {
+	var projVal *string
+	if projectID != "" {
+		projVal = &projectID
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO users (id, email, password_hash, role, project_id)
+		VALUES ($1, $2, $3, $4, $5)
+	`, id, email, passwordHash, role, projVal)
+	return err
+}
+
+func (s *sessionStore) getUserByEmail(ctx context.Context, email string) (*userRow, error) {
+	r := &userRow{}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, email, password_hash, role, project_id, created_at
+		FROM users WHERE email = $1
+	`, email).Scan(&r.ID, &r.Email, &r.PasswordHash, &r.Role, &r.ProjectID, &r.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (s *sessionStore) getUserByID(ctx context.Context, id string) (*userRow, error) {
+	r := &userRow{}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, email, password_hash, role, project_id, created_at
+		FROM users WHERE id = $1
+	`, id).Scan(&r.ID, &r.Email, &r.PasswordHash, &r.Role, &r.ProjectID, &r.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// --- CRUD Agentes ---
+
+func (s *sessionStore) createAgent(ctx context.Context, id, sessionID, name, description, aiConfig string, inbound, outbound bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if inbound {
+		_, err = tx.ExecContext(ctx, `UPDATE agents SET inbound = FALSE WHERE session_id = $1`, sessionID)
+		if err != nil {
+			return err
+		}
+	}
+	if outbound {
+		_, err = tx.ExecContext(ctx, `UPDATE agents SET outbound = FALSE WHERE session_id = $1`, sessionID)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO agents (id, session_id, name, description, ai_config, inbound, outbound)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, id, sessionID, name, description, aiConfig, inbound, outbound)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (s *sessionStore) updateAgent(ctx context.Context, id, name, description, aiConfig string, inbound, outbound bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var sessionID string
+	err = tx.QueryRowContext(ctx, `SELECT session_id FROM agents WHERE id = $1`, id).Scan(&sessionID)
+	if err != nil {
+		return err
+	}
+
+	if inbound {
+		_, err = tx.ExecContext(ctx, `UPDATE agents SET inbound = FALSE WHERE session_id = $1`, sessionID)
+		if err != nil {
+			return err
+		}
+	}
+	if outbound {
+		_, err = tx.ExecContext(ctx, `UPDATE agents SET outbound = FALSE WHERE session_id = $1`, sessionID)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		UPDATE agents SET name = $1, description = $2, ai_config = $3, inbound = $4, outbound = $5
+		WHERE id = $6
+	`, name, description, aiConfig, inbound, outbound, id)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (s *sessionStore) deleteAgent(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM agents WHERE id = $1`, id)
+	return err
+}
+
+func (s *sessionStore) getAgent(ctx context.Context, id string) (*agentRow, error) {
+	r := &agentRow{}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, session_id, name, COALESCE(description, ''), ai_config, inbound, outbound, created_at
+		FROM agents WHERE id = $1
+	`, id).Scan(&r.ID, &r.SessionID, &r.Name, &r.Description, &r.AIConfig, &r.Inbound, &r.Outbound, &r.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (s *sessionStore) listAgents(ctx context.Context, sessionID string) ([]agentRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, session_id, name, COALESCE(description, ''), ai_config, inbound, outbound, created_at
+		FROM agents WHERE session_id = $1 ORDER BY created_at
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []agentRow
+	for rows.Next() {
+		var r agentRow
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.Name, &r.Description, &r.AIConfig, &r.Inbound, &r.Outbound, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *sessionStore) getActiveAgent(ctx context.Context, sessionID string, direction string) (*agentRow, error) {
+	r := &agentRow{}
+	query := `SELECT id, session_id, name, COALESCE(description, ''), ai_config, inbound, outbound, created_at FROM agents WHERE session_id = $1 AND inbound = TRUE LIMIT 1`
+	if direction == "outbound" {
+		query = `SELECT id, session_id, name, COALESCE(description, ''), ai_config, inbound, outbound, created_at FROM agents WHERE session_id = $1 AND outbound = TRUE LIMIT 1`
+	}
+	err := s.db.QueryRowContext(ctx, query, sessionID).Scan(&r.ID, &r.SessionID, &r.Name, &r.Description, &r.AIConfig, &r.Inbound, &r.Outbound, &r.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
 }

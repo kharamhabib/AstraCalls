@@ -8,7 +8,7 @@ import (
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 
-	"wacalls/internal/voip/core"
+	"kallia/internal/voip/core"
 )
 
 // fakeSocket implementa core.VoipSocket para testes dos listeners.

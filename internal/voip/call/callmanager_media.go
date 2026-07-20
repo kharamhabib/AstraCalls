@@ -5,9 +5,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"time"
-	"wacalls/internal/voip/core"
-	"wacalls/internal/voip/media"
-	"wacalls/internal/voip/transport"
+	"kallia/internal/voip/core"
+	"kallia/internal/voip/media"
+	"kallia/internal/voip/transport"
 )
 
 func (m *CallManager) initCodec() {

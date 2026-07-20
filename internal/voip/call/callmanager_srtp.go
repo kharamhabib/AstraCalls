@@ -1,8 +1,8 @@
 package call
 
 import (
-	"wacalls/internal/voip/core"
-	"wacalls/internal/voip/media"
+	"kallia/internal/voip/core"
+	"kallia/internal/voip/media"
 
 	"go.mau.fi/whatsmeow/types"
 )

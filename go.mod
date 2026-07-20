@@ -1,4 +1,4 @@
-module wacalls
+module kallia
 
 go 1.26.4
 

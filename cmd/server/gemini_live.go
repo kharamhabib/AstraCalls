@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -74,7 +75,14 @@ const setupHandshakeTimeout = 15 * time.Second
 
 // connectAndSetup abre a conexão websocket e faz o setup inicial.
 func (g *GeminiLiveClient) connectAndSetup() error {
-	url := fmt.Sprintf("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=%s", g.config.GeminiAPIKey)
+	apiKey := g.config.GeminiAPIKey
+	if apiKey == "" {
+		apiKey = os.Getenv("WACALLS_GEMINI_API_KEY")
+		if apiKey == "" {
+			apiKey = os.Getenv("GEMINI_API_KEY")
+		}
+	}
+	url := fmt.Sprintf("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=%s", apiKey)
 
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
@@ -210,6 +218,18 @@ func (g *GeminiLiveClient) buildTools() []map[string]any {
 						"prompt":   map[string]any{"type": "STRING", "description": "Instruções para a IA na próxima chamada."},
 					},
 					"required": []string{"datetime"},
+				},
+			})
+		case "transfer_to_agent":
+			decls = append(decls, map[string]any{
+				"name":        "transfer_to_agent",
+				"description": "Transfere a chamada de voz para outro atendente ou especialista. Você deve passar o ID do agente destino.",
+				"parameters": map[string]any{
+					"type": "OBJECT",
+					"properties": map[string]any{
+						"agent_id": map[string]any{"type": "STRING", "description": "O ID do agente especialista destino."},
+					},
+					"required": []string{"agent_id"},
 				},
 			})
 		}

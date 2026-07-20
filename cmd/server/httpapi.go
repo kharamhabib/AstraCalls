@@ -16,9 +16,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"wacalls/internal/voip/call"
-	"wacalls/internal/voip/core"
-	"wacalls/internal/voip/media"
+	"kallia/internal/voip/call"
+	"kallia/internal/voip/core"
+	"kallia/internal/voip/media"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -49,6 +49,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/reject", s.handleReject)
 	mux.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
 	mux.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
+	mux.HandleFunc("DELETE /api/sessions/{sid}/history/{callId}", s.handleDeleteHistoryCall)
 	mux.HandleFunc("POST /api/sessions/{sid}/history/{callId}/summary", s.handleSaveCallSummary)
 	mux.HandleFunc("POST /api/sessions/{sid}/history/{callId}/ticket", s.handleOpenTicket)
 	mux.HandleFunc("GET /api/sessions/{sid}/history/{callId}/transcript", s.handleGetCallTranscript)
@@ -59,6 +60,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/audio", s.handleSendAudio)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/video", s.handleSendVideo)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/document", s.handleSendDocument)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/poll", s.handleSendPoll)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/interactive", s.handleSendInteractive)
 
 	// Webhook por sessão (recebimento -> Chatwoot etc.)
 	mux.HandleFunc("POST /api/sessions/{sid}/webhook", s.handleSetWebhook)
@@ -79,6 +82,13 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{sid}/ai-config", s.handleDeleteAIConfig)
 	mux.HandleFunc("POST /api/sessions/{sid}/tool-proxy", s.handleToolProxy)
 
+	// Agentes (Personas) por sessão
+	mux.HandleFunc("GET /api/sessions/{sid}/agents", s.handleListAgents)
+	mux.HandleFunc("POST /api/sessions/{sid}/agents", s.handleCreateAgent)
+	mux.HandleFunc("PUT /api/sessions/{sid}/agents/{agentId}", s.handleUpdateAgent)
+	mux.HandleFunc("DELETE /api/sessions/{sid}/agents/{agentId}", s.handleDeleteAgent)
+	mux.HandleFunc("POST /api/sessions/{sid}/agents/{agentId}/set-active", s.handleSetActiveAgent)
+
 	// Proxy do Gemini (a API key nunca sai do servidor: o navegador conecta aqui)
 	mux.HandleFunc("GET /api/sessions/{sid}/gemini/ws", s.handleGeminiWS)
 	mux.HandleFunc("POST /api/sessions/{sid}/gemini/generateContent", s.handleGeminiGenerateContent)
@@ -93,18 +103,16 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/events/ticket", s.handleEventTicket)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
+	// Rotas de Autenticação do Usuário
+	mux.HandleFunc("POST /api/auth/register", s.handleRegister)
+	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+
 	if s.staticDir != "" {
 		if _, err := os.Stat(s.staticDir); err == nil {
 			mux.Handle("/", http.FileServer(http.Dir(s.staticDir)))
 		}
 	}
-	var handler http.Handler = mux
-	apiKey := os.Getenv("WACALLS_API_KEY")
-	if apiKey != "" {
-		handler = withAuth(handler, apiKey, s.tickets, s.log)
-	} else {
-		s.log.Warn("WACALLS_API_KEY não definida — API completamente ABERTA. Qualquer um com acesso HTTP pode criar sessões, fazer chamadas e ler histórico. Defina a variável antes de expor o serviço.")
-	}
+	var handler http.Handler = s.withCombinedAuth(mux)
 
 	limiters := &apiLimiters{
 		global:   NewRateLimiter(rate.Limit(10), 30),
@@ -122,9 +130,9 @@ func (s *server) routes() http.Handler {
 // por vírgula) restringe as origens permitidas; sem ela, mantém "*" (necessário
 // para o widget do Chatwoot em domínio diverso), com aviso se houver API key.
 func withCORS(h http.Handler, log *slog.Logger) http.Handler {
-	allowed := parseCSVEnv("WACALLS_CORS_ORIGINS")
-	if len(allowed) == 0 && os.Getenv("WACALLS_API_KEY") != "" {
-		log.Warn("WACALLS_CORS_ORIGINS não definida — CORS aberto (*). Restrinja para os domínios do painel/Chatwoot em produção.")
+	allowed := parseCSVEnv("KALLIA_CORS_ORIGINS", "WACALLS_CORS_ORIGINS")
+	if len(allowed) == 0 && envStr("KALLIA_API_KEY", "WACALLS_API_KEY", "") != "" {
+		log.Warn("KALLIA_CORS_ORIGINS não definida — CORS aberto (*). Restrinja para os domínios do painel/Chatwoot em produção.")
 	}
 	allowedSet := map[string]bool{}
 	for _, o := range allowed {
@@ -148,8 +156,8 @@ func withCORS(h http.Handler, log *slog.Logger) http.Handler {
 	})
 }
 
-func parseCSVEnv(key string) []string {
-	v := strings.TrimSpace(os.Getenv(key))
+func parseCSVEnv(primaryKey, fallbackKey string) []string {
+	v := strings.TrimSpace(envStr(primaryKey, fallbackKey, ""))
 	if v == "" {
 		return nil
 	}
@@ -343,7 +351,19 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSessionList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": s.sessions.infos()})
+	projectID, _ := r.Context().Value(ctxKeyProjectID).(string)
+	role, _ := r.Context().Value(ctxKeyUserRole).(string)
+
+	all := s.sessions.infos()
+	filtered := []SessionInfo{}
+
+	for _, info := range all {
+		if role == "appadmin" || info.ProjectID == projectID {
+			filtered = append(filtered, info)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": filtered})
 }
 
 func (s *server) handleSessionCalls(w http.ResponseWriter, r *http.Request) {
@@ -358,6 +378,58 @@ func (s *server) handleSessionCalls(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.checkWritePermission(w, r) {
+		return
+	}
+
+	projectID, _ := r.Context().Value(ctxKeyProjectID).(string)
+	planStatus, _ := r.Context().Value(ctxKeyPlanStatus).(string)
+	role, _ := r.Context().Value(ctxKeyUserRole).(string)
+
+	// Se for appadmin, permite bypass de restrições do projeto
+	if role != "appadmin" {
+		if projectID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "usuário não está associado a nenhum projeto"})
+			return
+		}
+		if planStatus != "active" {
+			writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "o plano deste projeto está inativo. Regularize o faturamento para gerenciar conexões."})
+			return
+		}
+
+		// Contar conexões atuais do projeto
+		var count int
+		err := s.sessions.store.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM sessions WHERE project_id = $1`, projectID).Scan(&count)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "erro ao checar limite de conexões"})
+			return
+		}
+
+		// Obter plano do projeto
+		proj, err := s.sessions.store.getProject(r.Context(), projectID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "erro ao obter projeto"})
+			return
+		}
+		if proj == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "projeto não encontrado"})
+			return
+		}
+
+		limit := 1
+		switch proj.Plan {
+		case "advantage":
+			limit = 3
+		case "expert":
+			limit = 5
+		}
+
+		if count >= limit {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": fmt.Sprintf("limite de conexões do plano %s atingido (%d/%d)", proj.Plan, count, limit)})
+			return
+		}
+	}
+
 	var body struct {
 		Name string `json:"name"`
 	}
@@ -366,15 +438,25 @@ func (s *server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "Session"
 	}
-	id, err := s.sessions.Create(name)
+
+	// Se o projeto for vazio (como no caso de appadmin sem projeto específico), atribuir "default"
+	targetProjectID := projectID
+	if targetProjectID == "" {
+		targetProjectID = "default"
+	}
+
+	id, apiKey, err := s.sessions.Create(name, targetProjectID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "apiKey": apiKey})
 }
 
 func (s *server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.checkWritePermission(w, r) {
+		return
+	}
 	if err := s.sessions.Delete(r.Context(), r.PathValue("sid")); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
@@ -383,6 +465,9 @@ func (s *server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSessionRename(w http.ResponseWriter, r *http.Request) {
+	if !s.checkWritePermission(w, r) {
+		return
+	}
 	var body struct {
 		Name string `json:"name"`
 	}
@@ -404,6 +489,9 @@ func (s *server) handleSessionRename(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSessionLogout(w http.ResponseWriter, r *http.Request) {
+	if !s.checkWritePermission(w, r) {
+		return
+	}
 	if err := s.sessions.Logout(r.Context(), r.PathValue("sid")); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
@@ -412,6 +500,9 @@ func (s *server) handleSessionLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSessionPair(w http.ResponseWriter, r *http.Request) {
+	if !s.checkWritePermission(w, r) {
+		return
+	}
 	if err := s.sessions.Pair(r.PathValue("sid")); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -420,6 +511,11 @@ func (s *server) handleSessionPair(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleStartCall(w http.ResponseWriter, r *http.Request) {
+	planStatus, _ := r.Context().Value(ctxKeyPlanStatus).(string)
+	if planStatus != "active" {
+		writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "o plano deste projeto está inativo. Regularize o faturamento para realizar ou receber chamadas."})
+		return
+	}
 	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
 		s.doStartCall(sess, w, r)
 	}
@@ -432,6 +528,11 @@ func (s *server) handleWebRTC(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleAccept(w http.ResponseWriter, r *http.Request) {
+	planStatus, _ := r.Context().Value(ctxKeyPlanStatus).(string)
+	if planStatus != "active" {
+		writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "o plano deste projeto está inativo. Regularize o faturamento para realizar ou receber chamadas."})
+		return
+	}
 	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
 		s.doAccept(sess, w, r)
 	}
@@ -523,6 +624,42 @@ func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	writeJSON(w, http.StatusOK, map[string]any{"rows": rows})
+}
+
+func (s *server) handleDeleteHistoryCall(w http.ResponseWriter, r *http.Request) {
+	if !s.checkWritePermission(w, r) {
+		return
+	}
+	sess := s.sessionByID(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	callID := r.PathValue("callId")
+	if callID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "callId required"})
+		return
+	}
+
+	// 1. Delete recording file if it exists on disk
+	if filePath := findRecordingPath(callID); filePath != "" {
+		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+			s.log.Warn("falha ao remover gravacao do disco", "call_id", callID, "path", filePath, "err", err)
+		} else {
+			s.log.Info("gravacao removida do disco", "call_id", callID, "path", filePath)
+		}
+	}
+
+	// 2. Delete from database history tables
+	if err := s.sessions.store.deleteCall(r.Context(), sess.id, callID); err != nil {
+		s.log.Error("falha ao deletar chamada do banco", "session", sess.id, "call_id", callID, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// 3. Remove from broker memory cache
+	s.broker.removeCall(sess.id, callID)
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (s *server) handleSaveCallSummary(w http.ResponseWriter, r *http.Request) {
@@ -932,7 +1069,7 @@ var (
 func loadTrustedProxies() {
 	trustedProxiesOnce.Do(func() {
 		trustedIPs = map[string]bool{}
-		for _, entry := range parseCSVEnv("WACALLS_TRUSTED_PROXIES") {
+		for _, entry := range parseCSVEnv("KALLIA_TRUSTED_PROXIES", "WACALLS_TRUSTED_PROXIES") {
 			if _, cidr, err := net.ParseCIDR(entry); err == nil {
 				trustedCIDRs = append(trustedCIDRs, cidr)
 				continue
@@ -1113,4 +1250,14 @@ func (s *server) handleNPSSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"summary": summary})
+}
+
+// checkWritePermission valida se o usuário autenticado possui cargo de admin ou appadmin para ações de alteração
+func (s *server) checkWritePermission(w http.ResponseWriter, r *http.Request) bool {
+	role, _ := r.Context().Value(ctxKeyUserRole).(string)
+	if role == "normal" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "seu usuário não tem permissão para realizar esta operação de escrita"})
+		return false
+	}
+	return true
 }

@@ -1,4 +1,4 @@
-import { getApiBase, getApiKey, clearAuth } from "./auth";
+import { getApiBase, getToken, clearAuth } from "./auth";
 import type { CallStatus } from "@/types/call";
 import type { SessionInfo, SessionState } from "@/types/session";
 
@@ -38,7 +38,7 @@ type StatusListener = (status: StreamStatus) => void;
 export const fetchEventTicket = async (): Promise<string> => {
   const r = await fetch(`${getApiBase()}/api/events/ticket`, {
     method: "POST",
-    headers: { "X-API-Key": getApiKey(), "Content-Type": "application/json" },
+    headers: { "Authorization": `Bearer ${getToken()}`, "Content-Type": "application/json" },
   });
   if (r.status === 401) {
     clearAuth();

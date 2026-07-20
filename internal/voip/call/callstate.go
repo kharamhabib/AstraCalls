@@ -3,7 +3,7 @@ package call
 import (
 	"fmt"
 	"time"
-	"wacalls/internal/voip/core"
+	"kallia/internal/voip/core"
 )
 
 type CallStateData struct {

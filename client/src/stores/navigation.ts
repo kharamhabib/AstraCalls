@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type NavSection = "dashboard" | "connections" | "calls" | "schedules" | "settings";
+export type NavSection = "dashboard" | "connections" | "calls" | "schedules" | "agents" | "settings";
 
 type NavigationState = {
   activeSection: NavSection;

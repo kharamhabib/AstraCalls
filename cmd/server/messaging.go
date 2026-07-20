@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -242,6 +243,169 @@ func (s *server) handleSendDocument(w http.ResponseWriter, r *http.Request) {
 		URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
 		FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 	}})
+}
+
+type sendPollReq struct {
+	To              string   `json:"to"`
+	Name            string   `json:"name"`
+	Options         []string `json:"options"`
+	SelectableCount int      `json:"selectable_count"`
+}
+
+func (s *server) handleSendPoll(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b sendPollReq
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if b.To == "" || b.Name == "" || len(b.Options) < 2 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to, name and at least 2 options required"})
+		return
+	}
+	selectableCount := b.SelectableCount
+	if selectableCount <= 0 {
+		selectableCount = 1
+	}
+
+	jid, err := resolveRecipient(b.To)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	msg := sess.getClient().BuildPollCreation(b.Name, b.Options, selectableCount)
+	resp, err := sess.getClient().SendMessage(r.Context(), jid, msg)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if err := sess.mgr.store.savePollOptions(r.Context(), sess.id, resp.ID, b.Options); err != nil {
+		sess.log.Error("falha ao persistir opcoes da enquete", "session", sess.id, "poll_id", resp.ID, "err", err)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": resp.ID, "to": jid.String(), "timestamp": resp.Timestamp.UnixMilli(),
+	})
+}
+
+type interactiveButtonReq struct {
+	Type        string `json:"type"` // "quick_reply", "url", "call"
+	DisplayText string `json:"display_text"`
+	ID          string `json:"id,omitempty"`
+	URL         string `json:"url,omitempty"`
+	Phone       string `json:"phone,omitempty"`
+}
+
+type sendInteractiveReq struct {
+	To      string                 `json:"to"`
+	Title   string                 `json:"title,omitempty"`
+	Body    string                 `json:"body"`
+	Footer  string                 `json:"footer,omitempty"`
+	Buttons []interactiveButtonReq `json:"buttons"`
+}
+
+func (s *server) handleSendInteractive(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b sendInteractiveReq
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if b.To == "" || b.Body == "" || len(b.Buttons) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to, body and at least 1 button required"})
+		return
+	}
+
+	jid, err := resolveRecipient(b.To)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	buttons := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(b.Buttons))
+	for _, btn := range b.Buttons {
+		var params string
+		var name string
+		switch btn.Type {
+		case "quick_reply":
+			name = "quick_reply"
+			paramsBytes, _ := json.Marshal(map[string]string{
+				"display_text": btn.DisplayText,
+				"id":           btn.ID,
+			})
+			params = string(paramsBytes)
+		case "url":
+			name = "cta_url"
+			paramsBytes, _ := json.Marshal(map[string]string{
+				"display_text": btn.DisplayText,
+				"url":          btn.URL,
+				"merchant_url": btn.URL,
+			})
+			params = string(paramsBytes)
+		case "call":
+			name = "cta_call"
+			paramsBytes, _ := json.Marshal(map[string]string{
+				"display_text": btn.DisplayText,
+				"phone_number": btn.Phone,
+			})
+			params = string(paramsBytes)
+		default:
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid button type: %s", btn.Type)})
+			return
+		}
+		buttons = append(buttons, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+			Name:             proto.String(name),
+			ButtonParamsJSON: proto.String(params),
+		})
+	}
+
+	interactiveMsg := &waE2E.InteractiveMessage{
+		Body: &waE2E.InteractiveMessage_Body{
+			Text: proto.String(b.Body),
+		},
+		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+				Buttons: buttons,
+			},
+		},
+	}
+
+	if b.Title != "" {
+		interactiveMsg.Header = &waE2E.InteractiveMessage_Header{
+			Title: proto.String(b.Title),
+		}
+	}
+	if b.Footer != "" {
+		interactiveMsg.Footer = &waE2E.InteractiveMessage_Footer{
+			Text: proto.String(b.Footer),
+		}
+	}
+
+	msg := &waE2E.Message{
+		ViewOnceMessage: &waE2E.FutureProofMessage{
+			Message: &waE2E.Message{
+				InteractiveMessage: interactiveMsg,
+			},
+		},
+	}
+
+	resp, err := sess.getClient().SendMessage(r.Context(), jid, msg)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": resp.ID, "to": jid.String(), "timestamp": resp.Timestamp.UnixMilli(),
+	})
 }
 
 // ---- Handlers de configuração do webhook ----

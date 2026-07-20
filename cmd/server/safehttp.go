@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
@@ -28,7 +27,7 @@ var errPrivateURL = errors.New("url resolve para endereço privado/interno (SSRF
 
 // allowPrivateURLs indica se o bloqueio de IPs privados está desativado.
 func allowPrivateURLs() bool {
-	return strings.EqualFold(os.Getenv("WACALLS_ALLOW_PRIVATE_URLS"), "true")
+	return strings.EqualFold(envStr("KALLIA_ALLOW_PRIVATE_URLS", "WACALLS_ALLOW_PRIVATE_URLS", ""), "true")
 }
 
 type ipLookupFunc func(host string) ([]net.IP, error)

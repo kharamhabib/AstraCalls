@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
-	"wacalls/internal/voip/core"
+	"kallia/internal/voip/core"
 
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
