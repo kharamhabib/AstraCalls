@@ -49,7 +49,18 @@ export const getInitials = (name: string): string => {
 export const isCallMissedOrRejected = (startedAt: number, endedAt: number | null, endReason?: string | null): boolean => {
   if (!endedAt) return true;
   if (endReason === "accepted_elsewhere") return true;
-  if (endReason === "rejected" || endReason === "no_answer" || endReason === "timeout" || endReason === "canceled") return true;
+  if (
+    endReason === "rejected" ||
+    endReason === "declined" ||
+    endReason === "busy" ||
+    endReason === "do_not_disturb" ||
+    endReason === "no_answer" ||
+    endReason === "timeout" ||
+    endReason === "canceled" ||
+    endReason === "cancelled" ||
+    endReason === "failed" ||
+    endReason === "unknown"
+  ) return true;
   const duration = endedAt - startedAt;
   if (duration < 3000) return true;
   return false;
@@ -77,8 +88,20 @@ export const getCallStatusDetails = (
   const isInbound = direction === "inbound";
   const duration = endedAt ? endedAt - startedAt : 0;
   const isAcceptedElsewhere = endReason === "accepted_elsewhere";
-  const isRejected = endReason === "rejected";
-  const isMissed = !endedAt || duration < 3000 || endReason === "no_answer" || endReason === "timeout" || endReason === "canceled";
+  const isRejected =
+    endReason === "rejected" ||
+    endReason === "declined" ||
+    endReason === "busy" ||
+    endReason === "do_not_disturb";
+  const isMissed =
+    !endedAt ||
+    duration < 3000 ||
+    endReason === "no_answer" ||
+    endReason === "timeout" ||
+    endReason === "canceled" ||
+    endReason === "cancelled" ||
+    endReason === "failed" ||
+    endReason === "unknown";
 
   if (isAcceptedElsewhere) {
     return {

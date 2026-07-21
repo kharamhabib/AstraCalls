@@ -198,6 +198,14 @@ Ao iniciar o backend Go, o `dbProvider`:
 - Procura a variável primária `KALLIA_PG_URL` (com fallback para `WACALLS_PG_URL`).
 - Verifica se existe a namespace `kallia_main`. Se o banco de dados contiver registros legados sob `wacalls_main`, ele utiliza automaticamente o namespace `wacalls` garantindo **zero perda de dados e compatibilidade 100%** com servidores já implantados em produção.
 
+### 6.3 Mensagens Interativas e Injeção de Nós Binários (whatsmeow)
+
+- **Contorno de Restrições Multi-Device**: As conexões normais via QR Code (Multi-Device) não possuem por padrão autorização nativa para renderização de botões rápidos (`quick_reply`) e listagem interativa nos dispositivos destinatários.
+- **Injeção de Metadados XML**: No arquivo [messaging.go](file:///c:/Users/khara/Desktop/APPS%20GRAVITY/Kallia%20-%20CRM/Kallia%20CRM/cmd/server/messaging.go), ao disparar requisições do tipo `/messages/interactive`, o servidor Kallia constrói e injeta dinamicamente nós XML binários através do parâmetro `whatsmeow.SendRequestExtra.AdditionalNodes`:
+  - Nó `<biz>`: Especifica o mapeamento interativo do tipo `native_flow` e o subtipo `mixed`.
+  - Nó `<bot>`: Com o atributo `biz_bot="1"`, inserido de forma automática apenas para conversas individuais (chats privados), garantindo o aceite e renderização visual dos botões no app do destinatário.
+- **Container ViewOnceMessageV2**: O payload `InteractiveMessage` é envelopado no contêiner moderno `ViewOnceMessageV2` do WhatsApp (em vez do antigo `ViewOnceMessage` v1), requisito atual para que o aplicativo oficial de destinatários renderize os componentes interativos.
+
 ---
 
 ## 7. Segurança e Hardening

@@ -62,6 +62,10 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/document", s.handleSendDocument)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/poll", s.handleSendPoll)
 	mux.HandleFunc("POST /api/sessions/{sid}/messages/interactive", s.handleSendInteractive)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/list", s.handleSendList)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/carousel", s.handleSendCarousel)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/contact", s.handleSendContact)
+	mux.HandleFunc("POST /api/sessions/{sid}/messages/location", s.handleSendLocation)
 
 	// Webhook por sessão (recebimento -> Chatwoot etc.)
 	mux.HandleFunc("POST /api/sessions/{sid}/webhook", s.handleSetWebhook)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
@@ -294,11 +295,12 @@ func (s *server) handleSendPoll(w http.ResponseWriter, r *http.Request) {
 }
 
 type interactiveButtonReq struct {
-	Type        string `json:"type"` // "quick_reply", "url", "call"
+	Type        string `json:"type"` // "quick_reply", "url", "call", "copy", "send_location"
 	DisplayText string `json:"display_text"`
 	ID          string `json:"id,omitempty"`
 	URL         string `json:"url,omitempty"`
 	Phone       string `json:"phone,omitempty"`
+	CopyCode    string `json:"copy_code,omitempty"`
 }
 
 type sendInteractiveReq struct {
@@ -357,6 +359,19 @@ func (s *server) handleSendInteractive(w http.ResponseWriter, r *http.Request) {
 				"phone_number": btn.Phone,
 			})
 			params = string(paramsBytes)
+		case "copy":
+			name = "cta_copy"
+			paramsBytes, _ := json.Marshal(map[string]string{
+				"display_text": btn.DisplayText,
+				"copy_code":    btn.CopyCode,
+			})
+			params = string(paramsBytes)
+		case "send_location":
+			name = "send_location"
+			paramsBytes, _ := json.Marshal(map[string]string{
+				"display_text": btn.DisplayText,
+			})
+			params = string(paramsBytes)
 		default:
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid button type: %s", btn.Type)})
 			return
@@ -390,14 +405,41 @@ func (s *server) handleSendInteractive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg := &waE2E.Message{
-		ViewOnceMessage: &waE2E.FutureProofMessage{
+		ViewOnceMessageV2: &waE2E.FutureProofMessage{
 			Message: &waE2E.Message{
 				InteractiveMessage: interactiveMsg,
 			},
 		},
 	}
 
-	resp, err := sess.getClient().SendMessage(r.Context(), jid, msg)
+	// Inject standard business/interactive binary nodes so that WhatsApp client displays the buttons.
+	bizNode := waBinary.Node{
+		Tag: "biz",
+		Content: []waBinary.Node{{
+			Tag: "interactive",
+			Attrs: waBinary.Attrs{"type": "native_flow", "v": "1"},
+			Content: []waBinary.Node{{
+				Tag: "native_flow",
+				Attrs: waBinary.Attrs{"v": "9", "name": "mixed"},
+			}},
+		}},
+	}
+
+	additionalNodes := []waBinary.Node{bizNode}
+	// O nó <bot biz_bot="1"> é o responsável pela marcação "IA" com a estrela ao lado do horário.
+	// Vamos comentar essa injeção para testar se os botões ainda renderizam sem a marcação.
+	/*
+	if jid.Server == "s.whatsapp.net" {
+		additionalNodes = append(additionalNodes, waBinary.Node{
+			Tag:   "bot",
+			Attrs: waBinary.Attrs{"biz_bot": "1"},
+		})
+	}
+	*/
+
+	resp, err := sess.getClient().SendMessage(r.Context(), jid, msg, whatsmeow.SendRequestExtra{
+		AdditionalNodes: &additionalNodes,
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -452,4 +494,362 @@ func (s *server) handleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type listRowReq struct {
+	RowID       string `json:"rowId"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+}
+
+type listSectionReq struct {
+	Title string       `json:"title,omitempty"`
+	Rows  []listRowReq `json:"rows"`
+}
+
+type sendListReq struct {
+	To          string           `json:"to"`
+	Title       string           `json:"title,omitempty"`
+	Description string           `json:"description"`
+	ButtonText  string           `json:"buttonText"`
+	Footer      string           `json:"footer,omitempty"`
+	Sections    []listSectionReq `json:"sections"`
+}
+
+func (s *server) handleSendList(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b sendListReq
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if b.To == "" || b.Description == "" || b.ButtonText == "" || len(b.Sections) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to, description, buttonText and sections required"})
+		return
+	}
+
+	jid, err := resolveRecipient(b.To)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	sections := make([]*waE2E.ListMessage_Section, 0, len(b.Sections))
+	for _, sec := range b.Sections {
+		rows := make([]*waE2E.ListMessage_Row, 0, len(sec.Rows))
+		for _, row := range sec.Rows {
+			rows = append(rows, &waE2E.ListMessage_Row{
+				RowID:       proto.String(row.RowID),
+				Title:       proto.String(row.Title),
+				Description: proto.String(row.Description),
+			})
+		}
+		sections = append(sections, &waE2E.ListMessage_Section{
+			Title: proto.String(sec.Title),
+			Rows:  rows,
+		})
+	}
+
+	listMsg := &waE2E.ListMessage{
+		Title:       proto.String(b.Title),
+		Description: proto.String(b.Description),
+		ButtonText:  proto.String(b.ButtonText),
+		ListType:    waE2E.ListMessage_SINGLE_SELECT.Enum(),
+		Sections:    sections,
+	}
+	if b.Footer != "" {
+		listMsg.FooterText = proto.String(b.Footer)
+	}
+
+	msg := &waE2E.Message{
+		ViewOnceMessageV2: &waE2E.FutureProofMessage{
+			Message: &waE2E.Message{
+				ListMessage: listMsg,
+			},
+		},
+	}
+
+	bizNode := waBinary.Node{
+		Tag: "biz",
+		Content: []waBinary.Node{{
+			Tag: "interactive",
+			Attrs: waBinary.Attrs{"type": "native_flow", "v": "1"},
+			Content: []waBinary.Node{{
+				Tag: "native_flow",
+				Attrs: waBinary.Attrs{"v": "9", "name": "mixed"},
+			}},
+		}},
+	}
+	additionalNodes := []waBinary.Node{bizNode}
+
+	resp, err := sess.getClient().SendMessage(r.Context(), jid, msg, whatsmeow.SendRequestExtra{
+		AdditionalNodes: &additionalNodes,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": resp.ID, "to": jid.String(), "timestamp": resp.Timestamp.UnixMilli(),
+	})
+}
+
+type carouselCardReq struct {
+	Title   string                 `json:"title,omitempty"`
+	Body    string                 `json:"body"`
+	Footer  string                 `json:"footer,omitempty"`
+	Buttons []interactiveButtonReq `json:"buttons"`
+}
+
+type sendCarouselReq struct {
+	To    string            `json:"to"`
+	Cards []carouselCardReq `json:"cards"`
+}
+
+func (s *server) handleSendCarousel(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b sendCarouselReq
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if b.To == "" || len(b.Cards) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to and cards required"})
+		return
+	}
+
+	jid, err := resolveRecipient(b.To)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	cards := make([]*waE2E.InteractiveMessage, 0, len(b.Cards))
+	for _, card := range b.Cards {
+		buttons := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(card.Buttons))
+		for _, btn := range card.Buttons {
+			var params string
+			var name string
+			switch btn.Type {
+			case "quick_reply":
+				name = "quick_reply"
+				paramsBytes, _ := json.Marshal(map[string]string{
+					"display_text": btn.DisplayText,
+					"id":           btn.ID,
+				})
+				params = string(paramsBytes)
+			case "url":
+				name = "cta_url"
+				paramsBytes, _ := json.Marshal(map[string]string{
+					"display_text": btn.DisplayText,
+					"url":          btn.URL,
+					"merchant_url": btn.URL,
+				})
+				params = string(paramsBytes)
+			case "call":
+				name = "cta_call"
+				paramsBytes, _ := json.Marshal(map[string]string{
+					"display_text": btn.DisplayText,
+					"phone_number": btn.Phone,
+				})
+				params = string(paramsBytes)
+			case "copy":
+				name = "cta_copy"
+				paramsBytes, _ := json.Marshal(map[string]string{
+					"display_text": btn.DisplayText,
+					"copy_code":    btn.CopyCode,
+				})
+				params = string(paramsBytes)
+			case "send_location":
+				name = "send_location"
+				paramsBytes, _ := json.Marshal(map[string]string{
+					"display_text": btn.DisplayText,
+				})
+				params = string(paramsBytes)
+			default:
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid button type in carousel: %s", btn.Type)})
+				return
+			}
+			buttons = append(buttons, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+				Name:             proto.String(name),
+				ButtonParamsJSON: proto.String(params),
+			})
+		}
+
+		cardMsg := &waE2E.InteractiveMessage{
+			Body: &waE2E.InteractiveMessage_Body{
+				Text: proto.String(card.Body),
+			},
+			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+					Buttons: buttons,
+				},
+			},
+		}
+		if card.Title != "" {
+			cardMsg.Header = &waE2E.InteractiveMessage_Header{
+				Title: proto.String(card.Title),
+			}
+		}
+		if card.Footer != "" {
+			cardMsg.Footer = &waE2E.InteractiveMessage_Footer{
+				Text: proto.String(card.Footer),
+			}
+		}
+		cards = append(cards, cardMsg)
+	}
+
+	interactiveMsg := &waE2E.InteractiveMessage{
+		InteractiveMessage: &waE2E.InteractiveMessage_CarouselMessage_{
+			CarouselMessage: &waE2E.InteractiveMessage_CarouselMessage{
+				Cards:            cards,
+				MessageVersion:   proto.Int32(1),
+				CarouselCardType: waE2E.InteractiveMessage_CarouselMessage_HSCROLL_CARDS.Enum(),
+			},
+		},
+	}
+
+	msg := &waE2E.Message{
+		ViewOnceMessageV2: &waE2E.FutureProofMessage{
+			Message: &waE2E.Message{
+				InteractiveMessage: interactiveMsg,
+			},
+		},
+	}
+
+	bizNode := waBinary.Node{
+		Tag: "biz",
+		Content: []waBinary.Node{{
+			Tag: "interactive",
+			Attrs: waBinary.Attrs{"type": "native_flow", "v": "1"},
+			Content: []waBinary.Node{{
+				Tag: "native_flow",
+				Attrs: waBinary.Attrs{"v": "9", "name": "mixed"},
+			}},
+		}},
+	}
+	additionalNodes := []waBinary.Node{bizNode}
+
+	resp, err := sess.getClient().SendMessage(r.Context(), jid, msg, whatsmeow.SendRequestExtra{
+		AdditionalNodes: &additionalNodes,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": resp.ID, "to": jid.String(), "timestamp": resp.Timestamp.UnixMilli(),
+	})
+}
+
+type sendContactReq struct {
+	To          string `json:"to"`
+	DisplayName string `json:"displayName"`
+	Vcard       string `json:"vcard"`
+}
+
+func (s *server) handleSendContact(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b sendContactReq
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if b.To == "" || b.DisplayName == "" || b.Vcard == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to, displayName and vcard required"})
+		return
+	}
+
+	jid, err := resolveRecipient(b.To)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	msg := &waE2E.Message{
+		ContactMessage: &waE2E.ContactMessage{
+			DisplayName: proto.String(b.DisplayName),
+			Vcard:       proto.String(b.Vcard),
+		},
+	}
+
+	resp, err := sess.getClient().SendMessage(r.Context(), jid, msg)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": resp.ID, "to": jid.String(), "timestamp": resp.Timestamp.UnixMilli(),
+	})
+}
+
+type sendLocationReq struct {
+	To        string  `json:"to"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Name      string  `json:"name,omitempty"`
+	Address   string  `json:"address,omitempty"`
+	URL       string  `json:"url,omitempty"`
+}
+
+func (s *server) handleSendLocation(w http.ResponseWriter, r *http.Request) {
+	sess := s.pairedSession(w, r.PathValue("sid"))
+	if sess == nil {
+		return
+	}
+	var b sendLocationReq
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if b.To == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "to required"})
+		return
+	}
+
+	jid, err := resolveRecipient(b.To)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	locMsg := &waE2E.LocationMessage{
+		DegreesLatitude:  proto.Float64(b.Latitude),
+		DegreesLongitude: proto.Float64(b.Longitude),
+	}
+	if b.Name != "" {
+		locMsg.Name = proto.String(b.Name)
+	}
+	if b.Address != "" {
+		locMsg.Address = proto.String(b.Address)
+	}
+	if b.URL != "" {
+		locMsg.URL = proto.String(b.URL)
+	}
+
+	msg := &waE2E.Message{
+		LocationMessage: locMsg,
+	}
+
+	resp, err := sess.getClient().SendMessage(r.Context(), jid, msg)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": resp.ID, "to": jid.String(), "timestamp": resp.Timestamp.UnixMilli(),
+	})
 }

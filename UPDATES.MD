@@ -12,6 +12,8 @@ Este documento registra as implementações recentes concluídas e as melhorias 
 - [x] **Agentes Especialistas & Hot-Swap (`TransferTo`)**: Suporte a personas distintas para chamadas *inbound* e *outbound*, e transferência de chamadas em tempo real entre agentes sem derrubar o canal VoIP.
 - [x] **Rebranding Completo para Kallia**: Módulo Go, imports, docker-compose, Dockerfile, scripts PowerShell/BAT e variáveis de ambiente `KALLIA_*` com fallback gracioso para instalações legadas.
 - [x] **Exclusão Autenticada no Histórico**: Correção e injeção do Bearer Token no frontend para exclusão segura de registros.
+- [x] **Mensagens Interativas com Botões (Multi-Device)**: Injeção automática de nós binários `biz` e `bot` via `whatsmeow` no Go para possibilitar e forçar a exibição de botões interativos nativos enviados por contas pessoais MD.
+- [x] **Atualização Completa da Documentação da API (OpenAPI/Swagger)**: Mapeamento de todas as mais de 20 rotas do projeto (Mensagens, Chatwoot, Agentes, WebRTC, Gemini) no `openapi.yaml`, com suporte a autorização via Connection API Key no Swagger.
 
 ---
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Trash2, Smartphone, Loader2, LogOut, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, Smartphone, Loader2, LogOut, CheckCircle2, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useSessions, setActiveSession } from "@/stores/sessions";
@@ -93,6 +93,42 @@ export const ConnectionsPage = () => {
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground">{s.jid ? s.jid.split("@")[0] : "Número pendente"}</p>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="text-[10px] font-mono text-muted-foreground/75 bg-muted/60 px-1.5 py-0.5 rounded-md select-all">
+                          SID: {s.id}
+                        </span>
+                        <button
+                          type="button"
+                          title="Copiar SID"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(s.id);
+                            toast.success("SID copiado para a área de transferência!");
+                          }}
+                          className="text-muted-foreground hover:text-foreground p-0.5 rounded hover:bg-muted transition-colors"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {s.apiKey && (
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="text-[10px] font-mono text-muted-foreground/75 bg-muted/60 px-1.5 py-0.5 rounded-md">
+                            API Key: {s.apiKey.slice(0, 6)}••••••••
+                          </span>
+                          <button
+                            type="button"
+                            title="Copiar API Key"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(s.apiKey);
+                              toast.success("Chave de API da conexão copiada com sucesso!");
+                            }}
+                            className="text-muted-foreground hover:text-foreground p-0.5 rounded hover:bg-muted transition-colors"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Plus, Bot, Pencil, Trash2, Loader2, ZapIcon, Radio, PhoneIncoming, PhoneOutgoing, X, Check, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,30 +33,32 @@ const RoleBadge = ({ role }: { role: Agent["role"] }) => {
   );
 };
 
-const DeleteModal = ({ name, onConfirm, onCancel, busy }: { name: string; onConfirm: () => void; onCancel: () => void; busy: boolean }) => (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in">
-    <div className="w-full max-w-sm rounded-2xl border bg-card p-6 shadow-2xl space-y-4 mx-4">
-      <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
-          <AlertTriangle className="h-5 w-5" />
-        </span>
-        <div>
-          <h3 className="font-semibold text-sm">Excluir agente</h3>
-          <p className="text-xs text-muted-foreground mt-1">
-            Tem certeza que deseja excluir o agente <strong>"{name}"</strong>? Esta ação não pode ser desfeita.
-          </p>
+const DeleteModal = ({ name, onConfirm, onCancel, busy }: { name: string; onConfirm: () => void; onCancel: () => void; busy: boolean }) => 
+  createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in">
+      <div className="w-full max-w-sm rounded-2xl border bg-card p-6 shadow-2xl space-y-4 mx-4">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
+            <AlertTriangle className="h-5 w-5" />
+          </span>
+          <div>
+            <h3 className="font-semibold text-sm">Excluir agente</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              Tem certeza que deseja excluir o agente <strong>"{name}"</strong>? Esta ação não pode ser desfeita.
+            </p>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={busy}>Cancelar</Button>
+          <Button variant="destructive" size="sm" onClick={onConfirm} disabled={busy}>
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+            Excluir
+          </Button>
         </div>
       </div>
-      <div className="flex justify-end gap-2 pt-1">
-        <Button variant="outline" size="sm" onClick={onCancel} disabled={busy}>Cancelar</Button>
-        <Button variant="destructive" size="sm" onClick={onConfirm} disabled={busy}>
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
-          Excluir
-        </Button>
-      </div>
-    </div>
-  </div>
-);
+    </div>,
+    document.body
+  );
 
 const AgentForm = ({
   initial,
@@ -94,7 +97,7 @@ const AgentForm = ({
     });
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in p-4">
       <div className="w-full max-w-lg rounded-2xl border bg-card shadow-2xl flex flex-col max-h-[90vh]">
         {/* Header */}
@@ -201,7 +204,8 @@ const AgentForm = ({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

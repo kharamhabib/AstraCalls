@@ -27,17 +27,18 @@ tags:
   - name: Chamadas
     description: Iniciar, atender, rejeitar, transferir e encerrar chamadas VoIP
   - name: Mensagens
-    description: Envio de texto e mídia (imagem, áudio, vídeo, documento)
+    description: Envio de texto e mídia (imagem, áudio, vídeo, documento) via WhatsApp
   - name: Webhook
     description: Configuração de webhook de eventos por sessão
   - name: Chatwoot
     description: Integração nativa com Chatwoot (canal API)
   - name: Eventos & Histórico
-    description: SSE em tempo real, histórico persistido e exclusão de chamadas
+    description: SSE em tempo real, histórico persistido, gravações, NPS e transcrições
 
 security:
   - bearerAuth: []
   - apiKeyAuth: []
+  - connectionApiKeyAuth: []
 
 components:
   securitySchemes:
@@ -65,7 +66,7 @@ components:
       schema: { type: string }
       description: ID da sessão (conexão WhatsApp).
     CallId:
-      name: id
+      name: callId
       in: path
       required: true
       schema: { type: string }
@@ -76,6 +77,12 @@ components:
       required: true
       schema: { type: string }
       description: ID do agente especialista.
+    Jid:
+      name: jid
+      in: path
+      required: true
+      schema: { type: string }
+      description: "Jid do contato do WhatsApp (ex: 5561999999999@s.whatsapp.net)."
 
   schemas:
     User:
@@ -90,13 +97,13 @@ components:
       type: object
       properties:
         id: { type: string, example: "agent_123" }
+        sessionId: { type: string, example: "6458cca60a17c0cefa71de9da9dc92a2" }
         name: { type: string, example: "Atendente Comercial" }
-        prompt: { type: string, example: "Você é uma assistente comercial prestativa." }
-        greeting: { type: string, example: "Olá! Como posso te ajudar hoje?" }
-        voice: { type: string, example: "Puck" }
-        inboundEnabled: { type: boolean, example: true }
-        outboundEnabled: { type: boolean, example: false }
-        isDefault: { type: boolean, example: true }
+        description: { type: string, example: "Especialista em vendas de hardware" }
+        aiConfig: { type: string, example: "{\"systemInstruction\":\"Você é um especialista...\"}" }
+        inbound: { type: boolean, example: true }
+        outbound: { type: boolean, example: false }
+        createdAt: { type: string, format: "date-time", example: "2026-07-21T01:00:00Z" }
 
     Session:
       type: object
@@ -118,7 +125,170 @@ components:
         ai: { type: boolean, example: true }
         prompt: { type: string, example: "Instrução personalizada para a chamada" }
 
+    SendMessageRequest:
+      type: object
+      required: [to]
+      properties:
+        to: { type: string, example: "5561999999999@s.whatsapp.net", description: "JID ou número do destinatário" }
+        text: { type: string, example: "Olá, bem-vindo ao Kallia!" }
+        mediaUrl: { type: string, example: "https://site.com/imagem.png" }
+        base64: { type: string, description: "Mídia em base64 (opcional)" }
+        fileName: { type: string, example: "boleto.pdf" }
+
+    SendPollRequest:
+      type: object
+      required: [to, name, options]
+      properties:
+        to: { type: string, example: "5561999999999@s.whatsapp.net" }
+        name: { type: string, example: "Você prefere qual horário?" }
+        options:
+          type: array
+          items: { type: string }
+          example: ["Manhã", "Tarde", "Noite"]
+        selectableOptionsCount: { type: integer, example: 1 }
+
+    ChatwootConfig:
+      type: object
+      required: [accountId, inboxId, token, url]
+      properties:
+        accountId: { type: integer, example: 1 }
+        inboxId: { type: integer, example: 5 }
+        token: { type: string, example: "abc123xyz" }
+        url: { type: string, example: "https://chatwoot.meudominio.com" }
+
+    WebhookConfig:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, example: "https://webhook.site/abc123" }
+        events:
+          type: array
+          items: { type: string }
+          example: ["call.started", "call.ended", "message.received"]
+
+    SendInteractiveRequest:
+      type: object
+      required: [to, body, buttons]
+      properties:
+        to: { type: string, example: "5561999999999@s.whatsapp.net" }
+        title: { type: string, example: "Confirmação" }
+        body: { type: string, example: "Deseja falar com um atendente?" }
+        footer: { type: string, example: "Kallia CRM" }
+        buttons:
+          type: array
+          items:
+            $ref: "#/components/schemas/InteractiveButton"
+
+    InteractiveButton:
+      type: object
+      required: [type, display_text]
+      properties:
+        type: { type: string, enum: [quick_reply, url, call, copy, send_location], example: "quick_reply" }
+        display_text: { type: string, example: "Sim, por favor" }
+        id: { type: string, example: "btn_yes", description: "ID para botões de quick_reply" }
+        url: { type: string, example: "https://kallia.com", description: "URL para botões do tipo url" }
+        phone: { type: string, example: "+5527999999999", description: "Telefone para botões do tipo call" }
+        copy_code: { type: string, example: "CUPOM10", description: "Código de cupom a ser copiado" }
+
+    SendListRequest:
+      type: object
+      required: [to, description, buttonText, sections]
+      properties:
+        to: { type: string, example: "5561999999999@s.whatsapp.net" }
+        title: { type: string, example: "Atendimento" }
+        description: { type: string, example: "Escolha uma das opções abaixo para prosseguir:" }
+        buttonText: { type: string, example: "Ver opções" }
+        footer: { type: string, example: "Kallia CRM" }
+        sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListSection"
+
+    ListSection:
+      type: object
+      required: [rows]
+      properties:
+        title: { type: string, example: "Suporte e Financeiro" }
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListRow"
+
+    ListRow:
+      type: object
+      required: [rowId, title]
+      properties:
+        rowId: { type: string, example: "opcao_financeiro" }
+        title: { type: string, example: "Falar com o Financeiro" }
+        description: { type: string, example: "Dúvidas sobre faturas ou boletos" }
+
+    SendCarouselRequest:
+      type: object
+      required: [to, cards]
+      properties:
+        to: { type: string, example: "5561999999999@s.whatsapp.net" }
+        cards:
+          type: array
+          items:
+            $ref: "#/components/schemas/CarouselCard"
+
+    CarouselCard:
+      type: object
+      required: [body, buttons]
+      properties:
+        title: { type: string, example: "Curso de Go" }
+        body: { type: string, example: "Aprenda Go de forma prática e avançada." }
+        footer: { type: string, example: "Disponível agora" }
+        buttons:
+          type: array
+          items:
+            $ref: "#/components/schemas/InteractiveButton"
+
+    SendContactRequest:
+      type: object
+      required: [to, displayName, vcard]
+      properties:
+        to: { type: string, example: "5561999999999@s.whatsapp.net" }
+        displayName: { type: string, example: "Suporte Kallia" }
+        vcard: { type: string, example: "BEGIN:VCARD\nVERSION:3.0\nFN:Suporte Kallia\nTEL;TYPE=CELL:+5527992766315\nEND:VCARD" }
+
+    SendLocationRequest:
+      type: object
+      required: [to, latitude, longitude]
+      properties:
+        to: { type: string, example: "5561999999999@s.whatsapp.net" }
+        latitude: { type: number, format: float, example: -20.2976 }
+        longitude: { type: number, format: float, example: -40.2958 }
+        name: { type: string, example: "Praça do Papa" }
+        address: { type: string, example: "Vitória - ES, Brasil" }
+        url: { type: string, example: "https://maps.google.com/?q=-20.2976,-40.2958" }
+
 paths:
+  # === Autenticação ===
+  /api/auth/register:
+    post:
+      tags: [Autenticação]
+      summary: Registra um novo usuário no projeto
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, example: "novo@dominio.com" }
+                password: { type: string, example: "123456" }
+      responses:
+        "200":
+          description: Usuário cadastrado com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "created" }
+
   /api/auth/login:
     post:
       tags: [Autenticação]
@@ -158,6 +328,7 @@ paths:
                 properties:
                   user: { $ref: "#/components/schemas/User" }
 
+  # === Sessões & Conexões ===
   /api/sessions:
     get:
       tags: [Sessões & Conexões]
@@ -192,6 +363,68 @@ paths:
                 type: object
                 properties: { id: { type: string } }
 
+  /api/sessions/{sid}:
+    delete:
+      tags: [Sessões & Conexões]
+      summary: Exclui permanentemente uma conexão e seu banco de dados isolado
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: Conexão excluída com sucesso
+
+  /api/sessions/{sid}/rename:
+    post:
+      tags: [Sessões & Conexões]
+      summary: Altera o nome amigável da conexão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: "WhatsApp Comercial" }
+      responses:
+        "200":
+          description: Conexão renomeada
+
+  /api/sessions/{sid}/pair:
+    post:
+      tags: [Sessões & Conexões]
+      summary: Inicia a conexão WhatsApp e gera QR code para pareamento
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: Pareamento iniciado
+
+  /api/sessions/{sid}/logout:
+    post:
+      tags: [Sessões & Conexões]
+      summary: Desconecta a conta do WhatsApp do servidor (cancela registro do device)
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: Desconectado com sucesso
+
+  /api/config:
+    get:
+      tags: [Sessões & Conexões]
+      summary: Obtém configurações globais de chaves do servidor (configurações públicas)
+      responses:
+        "200":
+          description: OK
+
+  /api/metrics:
+    get:
+      tags: [Sessões & Conexões]
+      summary: Retorna métricas do servidor em tempo real
+      responses:
+        "200":
+          description: OK
+
+  # === Agentes Especialistas ===
   /api/sessions/{sid}/agents:
     get:
       tags: [Agentes Especialistas]
@@ -221,10 +454,63 @@ paths:
         "200":
           description: Agente criado
 
+  /api/sessions/{sid}/agents/{agentId}:
+    put:
+      tags: [Agentes Especialistas]
+      summary: Atualiza os dados de um agente especialista
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/AgentId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Agent" }
+      responses:
+        "200":
+          description: Agente atualizado
+    delete:
+      tags: [Agentes Especialistas]
+      summary: Exclui um agente especialista
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/AgentId" }
+      responses:
+        "200":
+          description: Agente excluído
+
+  /api/sessions/{sid}/agents/{agentId}/set-active:
+    post:
+      tags: [Agentes Especialistas]
+      summary: Ativa/Desativa o agente para tipos de chamadas específicas (inbound ou outbound)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/AgentId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [direction]
+              properties:
+                direction: { type: string, enum: [inbound, outbound, both] }
+      responses:
+        "200":
+          description: Status de ativação atualizado
+
+  # === Chamadas ===
   /api/sessions/{sid}/calls:
+    get:
+      tags: [Chamadas]
+      summary: Lista as chamadas VoIP atualmente ativas (em andamento) nesta conexão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: OK
     post:
       tags: [Chamadas]
-      summary: Inicia uma chamada de saída
+      summary: Inicia uma chamada ativa (outbound) a partir do servidor
       parameters: [{ $ref: "#/components/parameters/Sid" }]
       requestBody:
         required: true
@@ -235,19 +521,618 @@ paths:
         "200":
           description: Chamada iniciada
 
-  /api/sessions/{sid}/history/{id}:
-    delete:
-      tags: [Eventos & Histórico]
-      summary: Exclui uma chamada do histórico
+  /api/sessions/{sid}/calls/{callId}/accept:
+    post:
+      tags: [Chamadas]
+      summary: Atende uma chamada de voz recebida (inbound)
       parameters:
         - { $ref: "#/components/parameters/Sid" }
         - { $ref: "#/components/parameters/CallId" }
       responses:
         "200":
-          description: Chamada excluída
+          description: Chamada aceita
+
+  /api/sessions/{sid}/calls/{callId}/reject:
+    post:
+      tags: [Chamadas]
+      summary: Rejeita ou recusa uma chamada recebida
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      responses:
+        "200":
+          description: Chamada rejeitada
+
+  /api/sessions/{sid}/calls/{callId}:
+    delete:
+      tags: [Chamadas]
+      summary: Desconecta/encerra uma chamada VoIP ativa
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      responses:
+        "200":
+          description: Chamada encerrada
+
+  /api/sessions/{sid}/calls/{callId}/webrtc:
+    post:
+      tags: [Chamadas]
+      summary: Troca de SDP/Sinalização WebRTC (Pion WebRTC) para o canal de áudio
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sdp: { type: string }
+                type: { type: string }
+      responses:
+        "200":
+          description: Resposta SDP retornada
+
+  # === Mensagens ===
+  /api/sessions/{sid}/messages/text:
+    post:
+      tags: [Mensagens]
+      summary: Envia uma mensagem de texto simples
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendMessageRequest" }
+      responses:
+        "200":
+          description: Mensagem enviada
+
+  /api/sessions/{sid}/messages/image:
+    post:
+      tags: [Mensagens]
+      summary: Envia uma imagem de mídia
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendMessageRequest" }
+      responses:
+        "200":
+          description: Imagem enviada
+
+  /api/sessions/{sid}/messages/audio:
+    post:
+      tags: [Mensagens]
+      summary: Envia uma mensagem de áudio (formato de áudio/gravado)
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendMessageRequest" }
+      responses:
+        "200":
+          description: Áudio enviado
+
+  /api/sessions/{sid}/messages/video:
+    post:
+      tags: [Mensagens]
+      summary: Envia um vídeo de mídia
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendMessageRequest" }
+      responses:
+        "200":
+          description: Vídeo enviado
+
+  /api/sessions/{sid}/messages/document:
+    post:
+      tags: [Mensagens]
+      summary: Envia um documento PDF/Doc/XLS
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendMessageRequest" }
+      responses:
+        "200":
+          description: Documento enviado
+
+  /api/sessions/{sid}/messages/poll:
+    post:
+      tags: [Mensagens]
+      summary: Envia uma enquete de múltipla escolha para o contato
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendPollRequest" }
+      responses:
+        "200":
+          description: Enquete enviada
+
+  /api/sessions/{sid}/messages/interactive:
+    post:
+      tags: [Mensagens]
+      summary: Envia mensagem com botões interativos nativos do WhatsApp (quick-reply, url, call, copy, etc)
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendInteractiveRequest" }
+      responses:
+        "200":
+          description: Mensagem interativa enviada com sucesso
+
+  /api/sessions/{sid}/messages/list:
+    post:
+      tags: [Mensagens]
+      summary: Envia uma lista com opções selecionáveis (menu dropdown)
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendListRequest" }
+      responses:
+        "200":
+          description: Mensagem de lista enviada com sucesso
+
+  /api/sessions/{sid}/messages/carousel:
+    post:
+      tags: [Mensagens]
+      summary: Envia um carrossel interativo composto de vários cartões horizontalmente roláveis
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendCarouselRequest" }
+      responses:
+        "200":
+          description: Carrossel enviado com sucesso
+
+  /api/sessions/{sid}/messages/contact:
+    post:
+      tags: [Mensagens]
+      summary: Envia um cartão de contato eletrônico (vCard)
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendContactRequest" }
+      responses:
+        "200":
+          description: Cartão de contato enviado com sucesso
+
+  /api/sessions/{sid}/messages/location:
+    post:
+      tags: [Mensagens]
+      summary: Envia um mapa contendo coordenadas geográficas de localização
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendLocationRequest" }
+      responses:
+        "200":
+          description: Mensagem de localização enviada com sucesso
+
+  # === Webhook ===
+  /api/sessions/{sid}/webhook:
+    get:
+      tags: [Webhook]
+      summary: Retorna a URL e eventos do webhook configurados para a sessão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: OK
+    post:
+      tags: [Webhook]
+      summary: Cadastra ou atualiza o webhook de eventos da sessão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookConfig" }
+      responses:
+        "200":
+          description: Webhook atualizado
+    delete:
+      tags: [Webhook]
+      summary: Remove o webhook configurado para a conexão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: Webhook removido
+
+  # === Chatwoot ===
+  /api/sessions/{sid}/chatwoot:
+    get:
+      tags: [Chatwoot]
+      summary: Retorna a configuração de integração do Chatwoot
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: OK
+    post:
+      tags: [Chatwoot]
+      summary: Configura ou atualiza os parâmetros de conexão do Chatwoot
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatwootConfig" }
+      responses:
+        "200":
+          description: Integração configurada com sucesso
+    delete:
+      tags: [Chatwoot]
+      summary: Remove a integração do Chatwoot da conexão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: Integração Chatwoot removida
+
+  /api/sessions/{sid}/chatwoot/webhook:
+    post:
+      tags: [Chatwoot]
+      summary: Endpoint receptor do webhook enviado pelo Chatwoot (segurança via query param token)
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: Evento processado
+
+  /api/sessions/{sid}/chatwoot-history:
+    get:
+      tags: [Chatwoot]
+      summary: Recupera o histórico de mensagens da conversa correspondente no Chatwoot
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - name: phone
+          in: query
+          required: true
+          schema: { type: string }
+          description: Telefone do contato
+      responses:
+        "200":
+          description: OK
+
+  # === Eventos & Histórico ===
+  /api/sessions/{sid}/history:
+    get:
+      tags: [Eventos & Histórico]
+      summary: Retorna a lista de histórico de chamadas realizadas/recebidas pela sessão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: OK
+
+  /api/sessions/{sid}/history/{callId}:
+    delete:
+      tags: [Eventos & Histórico]
+      summary: Exclui permanentemente o registro de uma chamada específica do histórico
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      responses:
+        "200":
+          description: Chamada excluída do histórico
+
+  /api/sessions/{sid}/history/{callId}/summary:
+    post:
+      tags: [Eventos & Histórico]
+      summary: Armazena ou atualiza o resumo gerado por IA para a chamada
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [summary]
+              properties:
+                summary: { type: string, example: "O cliente solicitou suporte financeiro..." }
+      responses:
+        "200":
+          description: Resumo atualizado
+
+  /api/sessions/{sid}/history/{callId}/ticket:
+    post:
+      tags: [Eventos & Histórico]
+      summary: Marca a chamada com um flag e descrição de transbordo (abertura de ticket)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, example: "Falar com suporte financeiro" }
+      responses:
+        "200":
+          description: Ticket registrado
+
+  /api/sessions/{sid}/history/{callId}/transcript:
+    get:
+      tags: [Eventos & Histórico]
+      summary: Obtém as falas transcritas sequencialmente da chamada
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      responses:
+        "200":
+          description: OK
+
+  /api/sessions/{sid}/recordings/{callId}:
+    get:
+      tags: [Eventos & Histórico]
+      summary: Stream do arquivo de áudio WAV gravado da chamada
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/CallId" }
+      responses:
+        "200":
+          description: Arquivo de áudio (stream de bytes)
+
+  /api/sessions/{sid}/nps:
+    get:
+      tags: [Eventos & Histórico]
+      summary: Lista as pesquisas NPS respondidas da conexão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: OK
+
+  /api/sessions/{sid}/nps/summary:
+    get:
+      tags: [Eventos & Histórico]
+      summary: Obtém o consolidado geral (NPS Score, promotores, detratores) da sessão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: OK
+
+  /api/sessions/{sid}/contacts/{jid}:
+    get:
+      tags: [Eventos & Histórico]
+      summary: Obtém metadados de contato do WhatsApp (nome resolvido, foto de perfil)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - { $ref: "#/components/parameters/Jid" }
+      responses:
+        "200":
+          description: OK
+
+  /api/events/ticket:
+    post:
+      tags: [Eventos & Histórico]
+      summary: Gera um ticket criptográfico de uso único para conexões reativas (SSE/WS)
+      responses:
+        "200":
+          description: Ticket retornado com validade de 30 segundos
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  status: { type: string, example: "deleted" }
+                  ticket: { type: string, example: "tk_abc123..." }
+
+  /api/events:
+    get:
+      tags: [Eventos & Histórico]
+      summary: Canal Server-Sent Events (SSE) para atualização de chamadas em tempo real
+      parameters:
+        - name: clientId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: ticket
+          in: query
+          required: true
+          schema: { type: string }
+          description: Ticket temporário obtido via /api/events/ticket
+      responses:
+        "200":
+          description: Conexão de eventos ativa (text/event-stream)
+
+  # === Configurações de IA ===
+  /api/sessions/{sid}/ai-config:
+    get:
+      tags: [Agentes Especialistas]
+      summary: Retorna as configurações de IA (configurações do prompt global, agendamentos, etc.) da sessão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: OK
+    post:
+      tags: [Agentes Especialistas]
+      summary: Cria ou atualiza as configurações de IA da sessão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Configurações de IA salvas com sucesso
+    delete:
+      tags: [Agentes Especialistas]
+      summary: Exclui/reseta as configurações de IA da sessão
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "200":
+          description: Configurações de IA removidas
+
+  /api/sessions/{sid}/tool-proxy:
+    post:
+      tags: [Agentes Especialistas]
+      summary: Executa ferramentas customizadas da IA por meio de proxy seguro no backend
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Resultado da execução da ferramenta
+  /api/sessions/{sid}/calls/{id}/webrtc:
+    post:
+      tags: [Chamadas]
+      summary: Realiza a negociação de mídia WebRTC (troca de SDP) para o áudio no painel
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: ID da chamada
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sdp_offer]
+              properties:
+                sdp_offer: { type: string, description: "SDP Offer gerado pelo navegador do operador" }
+      responses:
+        "200":
+          description: SDP Answer retornado com sucesso para estabelecer o canal de áudio WebRTC
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sdp_answer: { type: string, description: "SDP Answer gerado pelo servidor Kallia" }
+
+  /api/sessions/{sid}/calls/{id}/accept:
+    post:
+      tags: [Chamadas]
+      summary: Atende uma chamada recebida (inbound)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: ID da chamada
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ai: { type: boolean, example: true, description: "Se true, a IA (Gemini) responderá e conduzirá a chamada" }
+                prompt: { type: string, example: "Instrução adicional opcional para esta chamada" }
+      responses:
+        "200":
+          description: Chamada aceita com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  call:
+                    type: object
+                    properties:
+                      callId: { type: string }
+
+  /api/sessions/{sid}/calls/{id}/reject:
+    post:
+      tags: [Chamadas]
+      summary: Rejeita/recusa uma chamada recebida (inbound)
+      parameters:
+        - { $ref: "#/components/parameters/Sid" }
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: ID da chamada
+      responses:
+        "200":
+          description: Chamada rejeitada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "ok" }
+
+  /api/sessions/{sid}/gemini/ws:
+    get:
+      tags: [Agentes Especialistas]
+      summary: Estabelece canal WebSocket para a API Gemini Live (proxy seguro de autenticação)
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      responses:
+        "101":
+          description: Protocolo trocado para WebSocket (BidiGenerateContent)
+
+  /api/sessions/{sid}/gemini/generateContent:
+    post:
+      tags: [Agentes Especialistas]
+      summary: "Proxy REST para o endpoint generateContent do Gemini (ex: geração de resumos)"
+      parameters: [{ $ref: "#/components/parameters/Sid" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Resposta do Gemini
+          content:
+            application/json:
+              schema: { type: object }
+
+  /api/chatwoot/resolve:
+    get:
+      tags: [Chatwoot]
+      summary: Resolve o JID e JID de Inbox correspondentes a um ID de conta e conversa do Chatwoot
+      parameters:
+        - name: account_id
+          in: query
+          required: true
+          schema: { type: integer }
+          description: ID da conta do Chatwoot
+        - name: conversation_id
+          in: query
+          required: true
+          schema: { type: string }
+          description: ID da conversa no Chatwoot
+      responses:
+        "200":
+          description: Resolvido com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id: { type: string, example: "6458cca60..." }
+                  inbox_id: { type: integer, example: 5 }
+                  phone: { type: string, example: "5561999999999" }
+                  name: { type: string, example: "João da Silva" }
+

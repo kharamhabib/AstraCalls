@@ -276,7 +276,7 @@ func (s *server) withCombinedAuth(next http.Handler) http.Handler {
 		path := r.URL.Path
 
 		// 1. Servir o frontend estático e as rotas públicas sem autenticação
-		if !strings.HasPrefix(path, "/api") {
+		if !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}

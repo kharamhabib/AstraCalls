@@ -63,7 +63,8 @@ Toda a pilha VoIP roda **nativamente em Go**: o codec de voz MLow, a empacotagem
 
 ### 💬 API de Mensagens & Webhooks
 
-- `POST /api/sessions/{sid}/messages/{text|image|audio|video|document}` (envio via base64 ou URL com guarda anti-SSRF).
+- `POST /api/sessions/{sid}/messages/{text|image|audio|video|document|poll|interactive}` (envio via base64, URL com guarda anti-SSRF, enquetes ou botões/listas interativos nativos).
+- **Injeção de Nós Binários**: Injeção automática de metadados `<biz>` e `<bot>` via `whatsmeow` para forçar a exibição correta de botões interativos enviados por conexões Multi-Device.
 - `GET/POST/DELETE /api/sessions/{sid}/webhook` com retries e entrega assíncrona.
 
 ### 🤝 Integração Nativa e Widget para Chatwoot
